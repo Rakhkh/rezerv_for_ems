@@ -63,12 +63,13 @@ if(BUILD_TESTING)
     add_test(NAME msgfmt.public_api COMMAND msgfmt_tests public_api)
     add_test(NAME msgfmt.utf8 COMMAND msgfmt_tests utf8)
     add_test(NAME msgfmt.escape COMMAND msgfmt_tests escape)
+    add_test(NAME msgfmt.parser COMMAND msgfmt_tests parser)
     add_test(NAME msgfmt.cli_skeleton
         COMMAND "${CMAKE_COMMAND}"
             "-DMSGFMT_EXECUTABLE=$<TARGET_FILE:msgfmt>"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_tests.cmake"
     )
-    set_tests_properties(msgfmt.public_api msgfmt.utf8 msgfmt.escape msgfmt.cli_skeleton
+    set_tests_properties(msgfmt.public_api msgfmt.utf8 msgfmt.escape msgfmt.parser msgfmt.cli_skeleton
         PROPERTIES TIMEOUT 10
     )
 endif()

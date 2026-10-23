@@ -37,7 +37,8 @@ using ParseResult = std::variant<ParsedMessage, Error>;
 using EscapeResult = std::variant<std::string, Error>;
 
 // Returned strings own their data; neither function retains the input view.
-// parse is declared for stage 3 and does not have a definition yet.
+// Parses markup into plain UTF-8 text and sorted UTF-16 style ranges.
+// Invalid UTF-8 returns Error::invalid_utf8 without a partial message.
 [[nodiscard]] ParseResult parse(std::string_view input);
 
 // Validates UTF-8 and prefixes every service character with a backslash.
