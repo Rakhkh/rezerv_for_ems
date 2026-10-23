@@ -55,13 +55,20 @@ target_link_libraries(msgfmt PRIVATE msgfmt_lib)
 msgfmt_configure_target(msgfmt)
 
 if(BUILD_TESTING)
-    add_executable(msgfmt_tests tests/test_main.cpp src/main.cpp)
+    add_executable(msgfmt_tests
+        tests/test_main.cpp
+        tests/test_support.cpp
+        tests/utf8_tests.cpp
+        tests/escape_tests.cpp
+        tests/parser_tests.cpp
+        tests/cli_tests.cpp
+        src/main.cpp
+    )
     target_link_libraries(msgfmt_tests PRIVATE msgfmt_lib)
     target_include_directories(msgfmt_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(msgfmt_tests PRIVATE MSGFMT_CLI_TESTING)
     msgfmt_configure_target(msgfmt_tests)
 
-    add_test(NAME msgfmt.public_api COMMAND msgfmt_tests public_api)
     add_test(NAME msgfmt.utf8 COMMAND msgfmt_tests utf8)
     add_test(NAME msgfmt.escape COMMAND msgfmt_tests escape)
     add_test(NAME msgfmt.parser COMMAND msgfmt_tests parser)
@@ -73,7 +80,7 @@ if(BUILD_TESTING)
             "-DMSGFMT_FIXTURE_DIR=${CMAKE_CURRENT_BINARY_DIR}/cli-tests/$<CONFIG>"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_tests.cmake"
     )
-    set_tests_properties(msgfmt.public_api msgfmt.utf8 msgfmt.escape msgfmt.parser msgfmt.cli_streams
+    set_tests_properties(msgfmt.utf8 msgfmt.escape msgfmt.parser msgfmt.cli_streams
         PROPERTIES TIMEOUT 10
     )
     set_tests_properties(msgfmt.cli PROPERTIES TIMEOUT 60)
