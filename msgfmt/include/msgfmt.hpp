@@ -36,9 +36,12 @@ enum class Error {
 using ParseResult = std::variant<ParsedMessage, Error>;
 using EscapeResult = std::variant<std::string, Error>;
 
-// Stage 1 declares the API. Definitions follow in stages 2 (escape) and 3 (parse).
 // Returned strings own their data; neither function retains the input view.
+// parse is declared for stage 3 and does not have a definition yet.
 [[nodiscard]] ParseResult parse(std::string_view input);
+
+// Validates UTF-8 and prefixes every service character with a backslash.
+// Other bytes are preserved. Invalid UTF-8 returns Error::invalid_utf8.
 [[nodiscard]] EscapeResult escape(std::string_view input);
 
 } // namespace msgfmt
