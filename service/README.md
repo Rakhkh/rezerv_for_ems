@@ -4,7 +4,7 @@
 Спецификация: [task23_go_python.md](../docs/task23_go_python.md).
 Порядок разработки: [PLAN_task23.md](../docs/PLAN_task23.md).
 
-## Текущее состояние: этап 6
+## Возможности
 
 Работает сбор страниц списка issue и JSON-отчёт в stdout или файл.
 Запросы репозиториев и страниц выполняются последовательно.
@@ -21,8 +21,8 @@ PR исключаются по наличию ключа pull_request, в том
 
 Реализованы перенаправления, повторы, обработка rate limit и HTTP trace.
 ETag-кэш страниц и постоянные перенаправления сохраняются между запусками.
-Комплексные файловые и сквозные проверки выполнены; Docker и Linux — этап 7.
-Полное соответствие ТЗ пока не заявляется.
+Go-служба и Docker-образ реализованы и проверены на Windows и Linux.
+Разработка интеграционных тестов на Python будет отдельным этапом.
 
 Обрабатываются 401 (unauthorized), 404 (not_found), исчерпание лимита повторов
 rate limit (rate_limited), сетевые ошибки и 5xx после повторов (request_failed)
@@ -44,6 +44,25 @@ rate limit (rate_limited), сетевые ошибки и 5xx после пов�
 Для проверки также разрешаются символьные ссылки и пути к ещё не созданным
 файлам. Ошибка файловой системы при проверке путей даёт код 3 с безопасной
 диагностикой.
+
+## Архитектура
+
+Служба — одна консольная программа и один Go-пакет, только стандартная
+библиотека. GitHub SDK и внешние зависимости не используются.
+
+Поток выполнения: CLI и окружение → последовательный сбор репозиториев
+и страниц → фильтрация и дедупликация → сортировка → JSON-отчёт.
+
+- config.go проверяет параметры и пути файлов.
+- client.go выполняет HTTP и перенаправления; retry.go управляет повторами.
+- pagination.go разбирает Link, collect.go отбирает issue.
+- cache.go хранит исходные страницы и постоянные перенаправления.
+- trace.go записывает JSON Lines, report.go формирует JSON.
+- main.go связывает компоненты и определяет код завершения.
+
+HTTP-транспорт, часы, ожидание и открытие файлов подменяются в Go-тестах.
+Внешняя проверка использует обычный бинарник и произвольный совместимый API,
+без специального тестового режима программы.
 
 ## Ручной запуск
 
@@ -74,6 +93,36 @@ $env:GITHUB_API_BASE_URL = 'http://127.0.0.1:8080/api/v3/'
 Сервер по указанному адресу должен быть запущен отдельно. Отчёт в файл:
 `--out report.json`; при этом stdout остаётся пустым. Фатальные JSON-объекты
 выводятся в stdout независимо от --out. Диагностика направляется в stderr.
+
+| Параметр | По умолчанию | Назначение |
+| --- | --- | --- |
+| --repos | Обязателен | Список owner/repo через запятую; повторы удаляются. |
+| --limit | 100 | Максимальное число подходящих issue на репозиторий, не меньше 1. |
+| --since | Не задан | Дата создания не раньше YYYY-MM-DD, начало суток UTC. |
+| --out | - | JSON в stdout либо указанный файл. |
+| --trace | Не задан | Файл JSON Lines для попыток HTTP. |
+| --cache-dir | ./ghreport-cache | Постоянный каталог исходных страниц. |
+
+Пример частичного отчёта (код завершения 1):
+
+```json
+{
+  "generated_at": "2026-10-25T09:00:00Z",
+  "repos": [
+    {
+      "repo": "stub/alpha", "error": null, "count": 1,
+      "issues": [
+        {
+          "number": 1, "title": "Первый выпуск", "author": "octocat",
+          "labels": [], "created_at": "2026-01-05T10:00:00Z",
+          "url": "https://example.com/issue/1"
+        }
+      ]
+    },
+    {"repo": "stub/missing", "error": "not_found", "count": 0, "issues": []}
+  ]
+}
+```
 
 ## Окружение и HTTP
 
@@ -229,7 +278,7 @@ go vet ./...
 Бинарник удаляется после завершения группы; тестовые отчёты также
 не сохраняются в репозитории. Отдельный запуск модульных тестов
 не требует сборки приложения. Только CLI-проверки: `go test -run '^TestCLI$' -v`.
-На этом этапе проверки выполнены на Windows. Docker и Linux-проверки — этап 7.
+Проверки выполнены на Windows с Go 1.27.2 и на Linux с Go 1.22.12/1.27.3.
 Модульные тесты подменяют HTTP-транспорт, часы и ожидание, поэтому паузы
 1/2/4 и 60/120 секунд проверяются без реального ожидания. CLI-тест использует
 одну настоящую паузу Retry-After: 1 и проверяет интервал между запросами.
@@ -254,6 +303,92 @@ go vet ./...
 Проверяются код 3, безопасная диагностика, закрытие открытых файлов и отказ
 от выдачи успешного результата. Запись в stdout также проверяется на отказ.
 
-На текущей Windows подтест символьных ссылок пропущен из-за отсутствия
-необходимой привилегии; обычные пути и жёсткие ссылки проверены. Проверка
-символьных ссылок в Linux и минимальной версии Go остаётся на этапе 7.
+На Windows подтест символьных ссылок пропускается при отсутствии необходимой
+привилегии; на Linux он проверен успешно обеими версиями Go.
+
+## Docker
+
+Команды выполняются из корня репозитория:
+
+```text
+docker build -t ghreport service/
+docker run --rm ghreport --repos cli/cli --limit 20 --out -
+```
+
+Для передачи уже заданного в окружении токена:
+
+```text
+docker run --rm -e GITHUB_TOKEN ghreport --repos cli/cli --limit 20 --out -
+```
+
+Dockerfile использует Go 1.27.3-bookworm и сборку с CGO_ENABLED=0.
+Финальный scratch содержит бинарник, системный набор CA-сертификатов и /work.
+Пользователь — 65532:65532; /work принадлежит ему и доступен для записи.
+Размер проверенного linux/amd64 образа — около 5,6 МиБ. В нём нет Go
+и командной оболочки. Токен и API base URL передаются при запуске.
+Контекст сборки допускает только Go-исходники, go.mod и инструкции сборки;
+кэши, отчёты, trace, исполняемые файлы и локальные секреты в него не включаются.
+
+Для локального API на хосте Docker Desktop:
+
+```text
+docker run --rm -e GITHUB_TOKEN -e GITHUB_API_BASE_URL=http://host.docker.internal:8080/api/v3/ ghreport --repos stub/alpha --out -
+```
+
+localhost внутри контейнера относится к самому контейнеру. На Linux-хосте
+для такого адреса можно добавить `--add-host host.docker.internal:host-gateway`.
+
+Без монтирования кэш и файлы находятся в рабочем слое контейнера и удаляются
+вместе с ним. Для сохранения между отдельными docker run используется volume:
+
+```text
+docker volume create ghreport-data
+docker run --rm --mount type=volume,source=ghreport-data,target=/work -e GITHUB_TOKEN ghreport --repos cli/cli --limit 20 --trace trace.jsonl --out -
+```
+
+Повторите последнюю команду для проверки кэша. Новый volume получает права
+рабочего каталога образа; работа с ним проверена от штатного пользователя.
+Отчёт и журнал можно сохранить внутри именованного контейнера, затем скопировать:
+
+```powershell
+docker create --name ghreport-run --mount type=volume,source=ghreport-data,target=/work -e GITHUB_TOKEN ghreport --repos cli/cli --limit 20 --out report.json --trace trace.jsonl
+docker start --attach ghreport-run
+docker inspect --format '{{.State.ExitCode}}' ghreport-run
+docker cp ghreport-run:/work/report.json "$env:TEMP\ghreport-report.json"
+docker cp ghreport-run:/work/trace.jsonl "$env:TEMP\ghreport-trace.jsonl"
+docker rm ghreport-run
+```
+
+### Проверки в Linux и готового образа
+
+Сборочная стадия позволяет повторить проверки без установки Go на хосте:
+
+```text
+docker build --target build -t ghreport-build service/
+docker run --rm --network none ghreport-build sh -ec 'go version; test -z "$(gofmt -l .)"; go vet ./...; go test -count=1 ./...'
+```
+
+Минимальная версия проверяется отдельно; пример для PowerShell из корня:
+
+```powershell
+$source = (Resolve-Path 'service').Path
+docker run --rm --network none -e GOTOOLCHAIN=local --mount "type=bind,source=$source,target=/src,readonly" -w /src golang:1.22.12-bookworm sh -ec 'go version; test -z "$(gofmt -l .)"; go vet ./...; go test -count=1 ./...'
+```
+
+Оба прогона включают модульные проверки и запуск настоящего Linux-бинарника.
+После загрузки образов внешняя сеть для них не нужна.
+
+Отдельная проверка финального образа запускается из service/ на хосте
+с работающим Docker Engine и доступной сетью между контейнером и хостом:
+
+```powershell
+$env:GHREPORT_DOCKER_IMAGE = 'ghreport'
+try { go test -run '^TestDockerImage$' -count=1 -v }
+finally { Remove-Item Env:GHREPORT_DOCKER_IMAGE -ErrorAction SilentlyContinue }
+```
+
+GHREPORT_DOCKER_IMAGE — настройка только Go-теста, программа ghreport её
+не читает. Без неё TestDockerImage пропускается, обычный go test не требует
+Docker. Тест проверяет пользователя, рабочий каталог, CA, передачу окружения,
+два запуска через управляемый API, пагинацию и ETag, файловый вывод и trace,
+а также запись в новый volume. Тестовые контейнеры и volume удаляются.
