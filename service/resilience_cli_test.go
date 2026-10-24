@@ -79,7 +79,7 @@ func testCLIResilienceAndTrace(t *testing.T, binary string) {
 			}
 		}))
 		defer server.Close()
-		dir := t.TempDir()
+		dir := testTempDir(t)
 		tracePath := filepath.Join(dir, "trace.jsonl")
 		if err := os.WriteFile(tracePath, []byte("old trace contents\n"), 0600); err != nil {
 			t.Fatal(err)
@@ -139,7 +139,7 @@ func testCLIResilienceAndTrace(t *testing.T, binary string) {
 			}
 		}))
 		defer server.Close()
-		dir := t.TempDir()
+		dir := testTempDir(t)
 		tracePath := filepath.Join(dir, "trace.jsonl")
 		code, stdout, stderr := runCLIProcess(t, binary, dir, server.URL,
 			"--repos", "stub/bad,stub/good", "--trace", tracePath)
@@ -169,7 +169,7 @@ func testCLIResilienceAndTrace(t *testing.T, binary string) {
 			}
 		}))
 		defer server.Close()
-		dir := t.TempDir()
+		dir := testTempDir(t)
 		tracePath := filepath.Join(dir, "trace.jsonl")
 		code, stdout, stderr := runCLIProcess(t, binary, dir, server.URL,
 			"--repos", "stub/limited,stub/good", "--trace", tracePath)
@@ -210,7 +210,7 @@ func testCLIResilienceAndTrace(t *testing.T, binary string) {
 			fmt.Fprint(w, "[]")
 		}))
 		defer server.Close()
-		dir := t.TempDir()
+		dir := testTempDir(t)
 		code, stdout, stderr := runCLIProcess(t, binary, dir, server.URL,
 			"--repos", "stub/alpha", "--trace", dir)
 		if code != 3 || len(stdout) != 0 || !strings.HasPrefix(stderr, "ghreport: ") || requests.Load() != 0 {

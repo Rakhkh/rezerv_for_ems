@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -30,6 +32,9 @@ func TestCLI(t *testing.T) {
 	})
 	t.Run("ResilienceAndTrace", func(t *testing.T) {
 		testCLIResilienceAndTrace(t, binary)
+	})
+	t.Run("Cache", func(t *testing.T) {
+		testCLICache(t, binary)
 	})
 }
 
@@ -58,7 +63,7 @@ func testCLIInvalidArguments(t *testing.T, binary string) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testTempDir(t)
 			for _, name := range []string{"report.json", "trace.jsonl"} {
 				if err := os.WriteFile(filepath.Join(dir, name), []byte("preserve existing contents"), 0600); err != nil {
 					t.Fatal(err)
@@ -120,7 +125,7 @@ func testCLIReport(t *testing.T, binary string) {
 				fmt.Fprint(w, tt.body)
 			}))
 			defer server.Close()
-			dir := t.TempDir()
+			dir := testTempDir(t)
 			out := "-"
 			if tt.toFile {
 				out = "отчёт.json"
@@ -183,6 +188,32 @@ func buildBinary(t *testing.T) string {
 		t.Fatalf("build binary: %v\n%s", err, output)
 	}
 	return binary
+}
+
+// Windows may temporarily report a directory as nonempty after deleting its
+// files. testing.TempDir retries access/sharing errors, but not error 145.
+// Retry cleanup only; HTTP scenarios and application errors are never retried here.
+func testTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Cleanup(func() {
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				err := os.RemoveAll(dir)
+				if err == nil {
+					return
+				}
+				var code syscall.Errno
+				if !errors.As(err, &code) || (code != 5 && code != 32 && code != 145) || !time.Now().Before(deadline) {
+					t.Errorf("temporary directory cleanup: %v", err)
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
+	}
+	return dir
 }
 
 func cliEnvironment(base string) []string {

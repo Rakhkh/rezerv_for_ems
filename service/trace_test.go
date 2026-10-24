@@ -44,7 +44,7 @@ func TestTraceRedactsTokenInURL(t *testing.T) {
 	client := newAPIClient(config{APIBaseURL: address, Token: "private-token"})
 	var trace bytes.Buffer
 	client.trace = json.NewEncoder(&trace)
-	if err := client.recordAttempt(time.Now(), address, 200, 1, ""); err != nil {
+	if err := client.recordAttempt(time.Now(), address, 200, 1, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(trace.String(), "private-token") {

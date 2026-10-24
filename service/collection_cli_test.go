@@ -92,7 +92,7 @@ func testCLICollectionAndErrors(t *testing.T, binary string) {
 				}
 			}))
 			defer server.Close()
-			dir := t.TempDir()
+			dir := testTempDir(t)
 			args := []string{"--repos", tt.repos, "--limit", "2", "--since", "2026-01-01", "--out", "-"}
 			if tt.fatal != "" {
 				args[len(args)-1] = "report.json"

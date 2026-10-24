@@ -24,6 +24,7 @@ type apiClient struct {
 	sleep     func(time.Duration)
 	trace     *json.Encoder
 	permanent map[string]*url.URL
+	cache     *pageCache
 }
 
 func newAPIClient(cfg config) *apiClient {
@@ -69,16 +70,28 @@ func (c *apiClient) fetchPage(address *url.URL) (issuePage, error) {
 		visited[key] = true
 		target := c.permanent[key]
 		if target == nil {
-			response, err := c.requestWithRetries(address)
+			cached, err := c.cache.load(address)
 			if err != nil {
 				return issuePage{}, err
 			}
-			target = response.redirect
-			if target == nil {
-				return issuePage{issues: response.issues, links: response.header.Values("Link"), address: address}, nil
-			}
-			if response.status == http.StatusMovedPermanently && !visited[target.String()] && redirects < 10 {
+			if cached != nil && cached.Redirect != "" {
+				target, _ = url.Parse(cached.Redirect) // Validated by load.
 				c.permanent[key] = target
+			} else {
+				response, err := c.requestWithRetries(address, cached)
+				if err != nil {
+					return issuePage{}, err
+				}
+				target = response.redirect
+				if target == nil {
+					return issuePage{issues: response.issues, links: response.header.Values("Link"), address: address}, nil
+				}
+				if response.status == http.StatusMovedPermanently && !visited[target.String()] && redirects < 10 {
+					if err := c.cache.store(cacheEntry{URL: key, Redirect: target.String()}); err != nil {
+						return issuePage{}, err
+					}
+					c.permanent[key] = target
+				}
 			}
 		}
 		if redirects == 10 {
@@ -90,15 +103,46 @@ func (c *apiClient) fetchPage(address *url.URL) (issuePage, error) {
 }
 
 type apiResponse struct {
-	status   int
-	header   http.Header
-	body     []byte
-	issues   []issue
-	redirect *url.URL
+	status    int
+	header    http.Header
+	body      []byte
+	issues    []issue
+	redirect  *url.URL
+	fromCache bool
+}
+
+// acceptPage merges 304 metadata before persisting the complete raw page.
+func (c *apiClient) acceptPage(address *url.URL, response *apiResponse, cached *cacheEntry) error {
+	entry := cacheEntry{URL: address.String(), ETag: response.header.Get("ETag"),
+		Body: response.body, Links: response.header.Values("Link")}
+	if response.status == http.StatusNotModified {
+		if cached == nil || cached.ETag == "" {
+			return repoInvalidResponse
+		}
+		entry = *cached
+		if _, present := response.header["Etag"]; present {
+			entry.ETag = response.header.Get("ETag")
+		}
+		if values, present := response.header["Link"]; present {
+			entry.Links = values
+		}
+	}
+	var err error
+	response.issues, err = decodeIssues(entry.Body)
+	if err != nil {
+		return err
+	}
+	response.fromCache = response.status == http.StatusNotModified
+	response.header = response.header.Clone()
+	if response.header == nil {
+		response.header = make(http.Header)
+	}
+	response.header["Link"] = entry.Links
+	return c.cache.store(entry)
 }
 
 // requestOnce closes the response body before any retry or wait.
-func (c *apiClient) requestOnce(address *url.URL) (apiResponse, error) {
+func (c *apiClient) requestOnce(address *url.URL, etag string) (apiResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address.String(), nil)
@@ -108,6 +152,9 @@ func (c *apiClient) requestOnce(address *url.URL) (apiResponse, error) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "ghreport/1.0")
 	req.Header.Set("X-GitHub-Api-Version", "2026-03-10")
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
 	if c.token != "" && sameOrigin(address, c.base) {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}

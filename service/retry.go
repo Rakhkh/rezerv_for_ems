@@ -17,11 +17,15 @@ const (
 	maxRateRetries      = 2
 )
 
-func (c *apiClient) requestWithRetries(address *url.URL) (apiResponse, error) {
+func (c *apiClient) requestWithRetries(address *url.URL, cached *cacheEntry) (apiResponse, error) {
+	etag := ""
+	if cached != nil {
+		etag = cached.ETag
+	}
 	transientRetries, rateRetries := 0, 0
 	for attempt := 1; ; attempt++ {
 		started := c.now()
-		response, requestErr := c.requestOnce(address)
+		response, requestErr := c.requestOnce(address, etag)
 		var resultErr error
 		traceError := ""
 		transient, limited := false, false
@@ -35,8 +39,8 @@ func (c *apiClient) requestWithRetries(address *url.URL) (apiResponse, error) {
 			}
 		} else {
 			switch response.status {
-			case http.StatusOK:
-				response.issues, resultErr = decodeIssues(response.body)
+			case http.StatusOK, http.StatusNotModified:
+				resultErr = c.acceptPage(address, &response, cached)
 				if resultErr != nil {
 					traceError = "invalid_response"
 				}
@@ -50,9 +54,6 @@ func (c *apiClient) requestWithRetries(address *url.URL) (apiResponse, error) {
 				}
 			case http.StatusNotFound:
 				resultErr, traceError = repoNotFound, "http_404"
-			case http.StatusNotModified:
-				// Stage 5 will allow 304 only for a valid conditional request.
-				resultErr, traceError = repoInvalidResponse, "invalid_response"
 			default:
 				limited = isRateLimited(response.status, response.header, response.body)
 				if limited {
@@ -63,7 +64,10 @@ func (c *apiClient) requestWithRetries(address *url.URL) (apiResponse, error) {
 				}
 			}
 		}
-		if err := c.recordAttempt(started, address, response.status, attempt, traceError); err != nil {
+		if errors.Is(resultErr, errCache) {
+			traceError = "cache"
+		}
+		if err := c.recordAttempt(started, address, response.status, attempt, response.fromCache, traceError); err != nil {
 			return apiResponse{}, err
 		}
 		if transient && transientRetries < maxTransientRetries {

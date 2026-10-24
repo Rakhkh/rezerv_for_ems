@@ -29,6 +29,11 @@ func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io
 
 	client := newAPIClient(cfg)
 	defer client.closeIdleConnections()
+	client.cache, err = newPageCache(cfg.CacheDir, cfg.Token, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "ghreport: %s\n", errCache)
+		return exitFatal
+	}
 	var traceFile *os.File
 	if cfg.Trace != "" {
 		traceFile, err = os.Create(cfg.Trace)
@@ -44,7 +49,7 @@ func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io
 	for _, repo := range cfg.Repos {
 		entry := repoReport{Repo: repo, Issues: []issue{}}
 		issues, err := client.collectIssues(repo, cfg.Limit, cfg.Since)
-		if errors.Is(err, errUnauthorized) || errors.Is(err, errTrace) {
+		if errors.Is(err, errUnauthorized) || errors.Is(err, errTrace) || errors.Is(err, errCache) {
 			fatalErr = err
 			break
 		}
@@ -69,6 +74,10 @@ func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io
 	}
 	if errors.Is(fatalErr, errTrace) {
 		fmt.Fprintf(stderr, "ghreport: %s\n", errTrace)
+		return exitFatal
+	}
+	if errors.Is(fatalErr, errCache) {
+		fmt.Fprintf(stderr, "ghreport: %s\n", errCache)
 		return exitFatal
 	}
 	if errors.Is(fatalErr, errUnauthorized) {

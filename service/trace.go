@@ -20,13 +20,14 @@ type traceRecord struct {
 	Error     *string `json:"error"`
 }
 
-func (c *apiClient) recordAttempt(started time.Time, address *url.URL, status, attempt int, description string) error {
+func (c *apiClient) recordAttempt(started time.Time, address *url.URL, status, attempt int, fromCache bool, description string) error {
 	if c.trace == nil {
 		return nil
 	}
 	record := traceRecord{
 		TS: started.UTC().Format(time.RFC3339), Method: http.MethodGet,
 		URL: address.String(), Status: status, Attempt: attempt,
+		FromCache: fromCache,
 	}
 	if c.token != "" {
 		record.URL = strings.ReplaceAll(record.URL, c.token, "[REDACTED]")
