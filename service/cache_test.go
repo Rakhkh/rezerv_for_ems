@@ -74,6 +74,27 @@ func TestCacheReplacementAndCorruption(t *testing.T) {
 	}
 }
 
+func TestValidETag(t *testing.T) {
+	for _, value := range []string{"", `""`, `"strong"`, `W/"weak"`, `"!#$~\"`, "\"\xc3\xa9\""} {
+		if !validETag(value) {
+			t.Fatalf("valid ETag rejected: %q", value)
+		}
+	}
+	for _, value := range []string{"unquoted", "*", `w/"lowercase"`, `W/`, `"unterminated`, `"a"b"`, `"has space"`} {
+		if validETag(value) {
+			t.Fatalf("invalid ETag accepted: %q", value)
+		}
+	}
+	for code := 0; code < 128; code++ {
+		if code >= 0x20 && code != 0x7f {
+			continue
+		}
+		if value := "\"bad" + string(rune(code)) + "\""; validETag(value) {
+			t.Fatalf("control character accepted in ETag: %q", value)
+		}
+	}
+}
+
 func TestCacheSeparatesAPIAddresses(t *testing.T) {
 	client := cachedTestClient(t, "http://example.invalid/api/")
 	cache := client.cache

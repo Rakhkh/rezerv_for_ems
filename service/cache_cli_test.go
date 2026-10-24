@@ -146,10 +146,10 @@ func testCLICache(t *testing.T, binary string) {
 		defer server.Close()
 		dir := testTempDir(t)
 		cacheDir := filepath.Join(dir, "cache")
-		for run := 0; run < 2; run++ {
+		for run := 0; run < 3; run++ {
 			code, stdout, stderr := runCLIProcess(t, binary, dir, server.URL,
 				"--repos", "stub/alpha", "--cache-dir", cacheDir)
-			if code != 0 || (run == 0 && stderr != "") || (run == 1 && !strings.Contains(stderr, "повреждённая запись кэша")) {
+			if code != 0 || (run == 0 && stderr != "") || (run > 0 && !strings.Contains(stderr, "повреждённая запись кэша")) {
 				t.Fatalf("run %d: code=%d, stdout=%s, stderr=%s", run, code, stdout, stderr)
 			}
 			files, err := os.ReadDir(cacheDir)
@@ -161,6 +161,23 @@ func testCLICache(t *testing.T, binary string) {
 				if err := os.WriteFile(path, []byte("[private-test-secret"), 0600); err != nil {
 					t.Fatal(err)
 				}
+			} else if run == 1 {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var entry cacheEntry
+				if err := json.Unmarshal(data, &entry); err != nil {
+					t.Fatal(err)
+				}
+				entry.ETag = "\"bad\x01\""
+				data, err = json.Marshal(entry)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0600); err != nil {
+					t.Fatal(err)
+				}
 			} else {
 				data, err := os.ReadFile(path)
 				if err != nil || !json.Valid(data) || strings.Contains(stderr, "private-test-secret") {
@@ -168,7 +185,7 @@ func testCLICache(t *testing.T, binary string) {
 				}
 			}
 		}
-		if requests.Load() != 2 {
+		if requests.Load() != 3 {
 			t.Fatalf("requests=%d", requests.Load())
 		}
 	})

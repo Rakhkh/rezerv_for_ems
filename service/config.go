@@ -136,30 +136,43 @@ func outputPathsConflict(out, trace string) (bool, error) {
 	paths := []string{out, trace}
 	infos := make([]os.FileInfo, 2)
 	for i, path := range paths {
-		absolute, err := filepath.Abs(path)
-		if err != nil {
-			return false, err
-		}
-		infos[i], err = os.Stat(absolute)
+		var err error
+		infos[i], err = os.Stat(path)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return false, err
-		}
-		paths[i], err = resolveOutputPath(absolute, 64)
-		if err != nil {
 			return false, err
 		}
 	}
 	if infos[0] != nil && infos[1] != nil {
 		return os.SameFile(infos[0], infos[1]), nil
 	}
+	for i, path := range paths {
+		var err error
+		paths[i], err = resolveOutputPath(path, 64)
+		if err != nil {
+			return false, err
+		}
+	}
 	return paths[0] == paths[1] || runtime.GOOS == "windows" && strings.EqualFold(paths[0], paths[1]), nil
 }
 
-// Resolve existing links even when the output file or its final directory does
-// not exist yet. The bound also stops dangling links with cyclic lexical targets.
+// Resolve links before cleaning "..", including when the final file is absent.
+// Only dangling-link expansion consumes the bound, not ordinary parent traversal.
 func resolveOutputPath(path string, remaining int) (string, error) {
-	if remaining == 0 {
-		return "", errors.New("не удалось разрешить путь вывода")
+	if !filepath.IsAbs(path) {
+		if runtime.GOOS == "windows" {
+			absolute, err := filepath.Abs(path)
+			if err != nil {
+				return "", err
+			}
+			path = absolute
+		} else {
+			wd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			// Join/Abs would clean "link/.." before the filesystem sees it.
+			path = wd + string(os.PathSeparator) + path
+		}
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err == nil || !errors.Is(err, os.ErrNotExist) {
@@ -170,19 +183,25 @@ func resolveOutputPath(path string, remaining int) (string, error) {
 		return "", statErr
 	}
 	if info != nil && info.Mode()&os.ModeSymlink != 0 {
+		if remaining == 0 {
+			return "", errors.New("не удалось разрешить путь вывода")
+		}
 		target, err := os.Readlink(path)
 		if err != nil {
 			return "", err
 		}
 		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(path), target)
+			parent, _ := filepath.Split(path)
+			target = parent + target
 		}
 		return resolveOutputPath(target, remaining-1)
 	}
-	parent := filepath.Dir(path)
-	if parent == path {
+	parent, name := filepath.Split(strings.TrimRightFunc(path, func(r rune) bool {
+		return r == '/' || r == rune(os.PathSeparator)
+	}))
+	if parent == "" {
 		return "", err
 	}
-	parent, err = resolveOutputPath(parent, remaining-1)
-	return filepath.Join(parent, filepath.Base(path)), err
+	parent, err = resolveOutputPath(parent, remaining)
+	return filepath.Join(parent, name), err
 }

@@ -102,6 +102,10 @@ func runWithFiles(args []string, lookupEnv func(string) (string, bool), stdout, 
 		return writeFatal(fatalAllFailed, stdout, stderr)
 	}
 	result.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+	if result.containsToken(cfg.Token) {
+		fmt.Fprintln(stderr, "ghreport: отчёт содержит токен; вывод отменён")
+		return exitFatal
+	}
 	if err := writeReport(cfg.Out, stdout, result, create); err != nil {
 		fmt.Fprintln(stderr, "ghreport: не удалось записать отчёт")
 		return exitFatal

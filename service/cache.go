@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -64,7 +63,7 @@ func (c *pageCache) load(address *url.URL) (*cacheEntry, error) {
 	var entry cacheEntry
 	valid := utf8.Valid(data) && json.Unmarshal(data, &entry) == nil &&
 		entry.Version == cacheVersion && entry.URL == address.String() &&
-		!strings.ContainsAny(entry.ETag, "\r\n\x00")
+		validETag(entry.ETag)
 	if valid && entry.Redirect != "" {
 		target, err := resolveAPIReference(entry.Redirect, address)
 		valid = err == nil && target.String() == entry.Redirect && len(entry.Body) == 0 &&
@@ -78,6 +77,26 @@ func (c *pageCache) load(address *url.URL) (*cacheEntry, error) {
 		return nil, nil
 	}
 	return &entry, nil
+}
+
+// RFC 9110: entity-tag = [ "W/" ] DQUOTE *etagc DQUOTE.
+// An empty value means no validator is stored.
+func validETag(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) >= 2 && value[:2] == "W/" {
+		value = value[2:]
+	}
+	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
+		return false
+	}
+	for i := 1; i < len(value)-1; i++ {
+		if value[i] < 0x21 || value[i] == '"' || value[i] == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *pageCache) store(entry cacheEntry) error {

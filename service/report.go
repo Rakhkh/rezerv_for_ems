@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -51,6 +52,34 @@ type fatalReport struct {
 }
 
 type outputFileCreator func(string) (io.WriteCloser, error)
+
+func (r report) containsToken(token string) bool {
+	if token == "" {
+		return false
+	}
+	contains := func(values ...string) bool {
+		for _, value := range values {
+			if strings.Contains(value, token) {
+				return true
+			}
+		}
+		return false
+	}
+	if contains(r.GeneratedAt) {
+		return true
+	}
+	for _, repo := range r.Repos {
+		if contains(repo.Repo) || repo.Error != nil && contains(string(*repo.Error)) {
+			return true
+		}
+		for _, item := range repo.Issues {
+			if contains(item.Title, item.Author, item.CreatedAt, item.URL) || contains(item.Labels...) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func writeReport(path string, stdout io.Writer, result report, create outputFileCreator) error {
 	if path == "-" {

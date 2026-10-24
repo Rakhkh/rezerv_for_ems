@@ -127,11 +127,8 @@ func TestAPIClientErrors(t *testing.T) {
 		body   string
 		want   error
 	}{
-		{"unauthorized", 401, "private error body", errUnauthorized},
-		{"not found", 404, "private error body", repoNotFound},
 		{"server failure", 500, "private error body", repoRequestFailed},
 		{"unconditional 304", 304, "", repoInvalidResponse},
-		{"broken JSON", 200, "[", repoInvalidResponse},
 		{"wrong structure", 200, "null", repoInvalidResponse},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

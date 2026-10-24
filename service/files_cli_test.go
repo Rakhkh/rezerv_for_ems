@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,15 +22,31 @@ func testCLIFilesAndCombined(t *testing.T, binary string) {
 			fmt.Fprint(w, "[]")
 		}))
 		defer server.Close()
-		for _, kind := range []string{"new", "relative alias", "hard link"} {
+		for _, kind := range []string{"new", "relative alias", "hard link", "symlink parent"} {
 			t.Run(kind, func(t *testing.T) {
 				dir := testTempDir(t)
 				out, trace := "result.json", "result.json"
-				if kind != "new" {
-					if err := os.WriteFile(filepath.Join(dir, out), []byte("existing contents"), 0600); err != nil {
+				if kind == "symlink parent" {
+					if runtime.GOOS == "windows" {
+						t.Skip("POSIX symlink/.. path semantics")
+					}
+					for _, path := range []string{"base", "other/child"} {
+						if err := os.MkdirAll(filepath.Join(dir, path), 0700); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := os.Symlink("../other/child", filepath.Join(dir, "base", "link")); err != nil {
 						t.Fatal(err)
 					}
-					trace = "./result.json"
+					out, trace = "base/link/../result.json", "other/result.json"
+				}
+				if kind != "new" {
+					if err := os.WriteFile(dir+string(os.PathSeparator)+out, []byte("existing contents"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if kind == "relative alias" {
+						trace = "./result.json"
+					}
 					if kind == "hard link" {
 						trace = "alias.json"
 						if err := os.Link(filepath.Join(dir, out), filepath.Join(dir, trace)); err != nil {
@@ -46,13 +63,103 @@ func testCLIFilesAndCombined(t *testing.T, binary string) {
 					t.Fatalf("conflict created cache: %v", err)
 				}
 				for _, path := range []string{out, trace} {
-					data, err := os.ReadFile(filepath.Join(dir, path))
+					data, err := os.ReadFile(dir + string(os.PathSeparator) + path)
 					if kind == "new" {
 						if !os.IsNotExist(err) {
 							t.Fatalf("conflict created output: %v", err)
 						}
 					} else if err != nil || string(data) != "existing contents" {
 						t.Fatalf("conflict changed existing output: %s, %v", data, err)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("reflected token cancels report", func(t *testing.T) {
+		for _, tt := range []struct {
+			name   string
+			toFile bool
+			cached bool
+		}{
+			{"stdout", false, false}, {"file", true, false}, {"cached file", true, true},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				body := testPage(testIssue(1, "2026-01-01T00:00:00Z", "contains process-test-secret"))
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					if r.Header.Get("Authorization") != "Bearer process-test-secret" {
+						t.Error("missing configured token")
+					}
+					if tt.cached {
+						if r.Header.Get("If-None-Match") != `"saved"` {
+							t.Error("304 regression did not make a conditional request")
+						}
+						w.WriteHeader(304)
+					} else {
+						w.Header().Set("ETag", `"saved"`)
+						fmt.Fprint(w, body)
+					}
+				}))
+				defer server.Close()
+				dir := testTempDir(t)
+				cacheDir := filepath.Join(dir, "cache")
+				outPath, tracePath := filepath.Join(dir, "report.json"), filepath.Join(dir, "trace.jsonl")
+				if err := os.WriteFile(outPath, []byte("existing report"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if tt.cached {
+					// Simulate a page saved previously with another credential.
+					cfg, err := parseConfig([]string{"--repos", "stub/alpha"}, envFrom(map[string]string{"GITHUB_API_BASE_URL": server.URL}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					client := newAPIClient(cfg)
+					t.Cleanup(client.closeIdleConnections)
+					cache, err := newPageCache(cacheDir, "", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := cache.store(cacheEntry{URL: client.issuesURL("stub/alpha").String(), ETag: `"saved"`, Body: json.RawMessage(body)}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				out := "-"
+				if tt.toFile {
+					out = outPath
+				}
+				code, stdout, stderr := runCLIProcess(t, binary, dir, server.URL, "--repos", "stub/alpha",
+					"--out", out, "--trace", tracePath, "--cache-dir", cacheDir)
+				if code != 3 || len(stdout) != 0 || !strings.Contains(stderr, "вывод отменён") ||
+					strings.Contains(stderr, "process-test-secret") || requests.Load() != 1 {
+					t.Fatalf("unsafe report: code=%d stdout=%s stderr=%s requests=%d", code, stdout, stderr, requests.Load())
+				}
+				data, err := os.ReadFile(outPath)
+				if err != nil || string(data) != "existing report" {
+					t.Fatal("unsafe result changed the existing report file")
+				}
+				trace, err := os.ReadFile(tracePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				records := parseTrace(t, string(trace))
+				status := 200
+				if tt.cached {
+					status = 304
+				}
+				if len(records) != 1 || records[0].Status != status || records[0].FromCache != tt.cached ||
+					strings.Contains(string(trace), "process-test-secret") {
+					t.Fatalf("unsafe trace: %+v", records)
+				}
+				files, err := os.ReadDir(cacheDir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, file := range files {
+					data, err := os.ReadFile(filepath.Join(cacheDir, file.Name()))
+					if err != nil || strings.Contains(string(data), "process-test-secret") {
+						t.Fatal("reflected token remained in cache")
 					}
 				}
 			})

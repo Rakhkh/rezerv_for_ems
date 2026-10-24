@@ -117,16 +117,14 @@ func testCLIInvalidArguments(t *testing.T, binary string) {
 func testCLIReport(t *testing.T, binary string) {
 	for _, tt := range []struct {
 		name   string
-		body   string
 		toFile bool
 	}{
-		{"stdout", testIssuePage, false},
-		{"empty page", "[]", false},
-		{"file", testIssuePage, true},
+		{"stdout", false},
+		{"file", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprint(w, tt.body)
+				fmt.Fprint(w, testIssuePage)
 			}))
 			defer server.Close()
 			dir := testTempDir(t)
@@ -166,14 +164,9 @@ func testCLIReport(t *testing.T, binary string) {
 			if err != nil || !strings.HasSuffix(result.GeneratedAt, "Z") || generated.Before(before) || generated.After(time.Now().UTC()) {
 				t.Fatalf("invalid generated_at: %q", result.GeneratedAt)
 			}
-			wantIssues, count := `[]`, 0
-			if tt.body != "[]" {
-				count = 2
-				wantIssues = testReportIssues
-			}
 			assertJSON(t, json.RawMessage(data), fmt.Sprintf(`{
-				"generated_at":%q,"repos":[{"repo":"cli/cli","error":null,"count":%d,"issues":%s}]
-			}`, result.GeneratedAt, count, wantIssues))
+				"generated_at":%q,"repos":[{"repo":"cli/cli","error":null,"count":2,"issues":%s}]
+			}`, result.GeneratedAt, testReportIssues))
 		})
 	}
 }

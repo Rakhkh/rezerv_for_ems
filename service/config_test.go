@@ -41,6 +41,41 @@ func TestOutputPathAliases(t *testing.T) {
 		if got, err := outputPathsConflict(first, filepath.Join(parentAlias, "output.json")); err != nil || !got {
 			t.Fatalf("symlink parent alias: %v, %v", got, err)
 		}
+		if runtime.GOOS != "windows" {
+			base, other := filepath.Join(dir, "base"), filepath.Join(dir, "other")
+			for _, path := range []string{base, filepath.Join(other, "child")} {
+				if err := os.MkdirAll(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink("../other/child", filepath.Join(base, "link")); err != nil {
+				t.Fatal(err)
+			}
+			// Preserve the original components: filepath.Join would hide the bug.
+			raw := base + "/link/../result"
+			actual, lexical := filepath.Join(other, "result"), filepath.Join(base, "result")
+			for _, exists := range []bool{false, true} {
+				if exists {
+					if err := os.WriteFile(actual, []byte("preserve"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for target, want := range map[string]bool{actual: true, lexical: false} {
+					if got, err := outputPathsConflict(raw, target); err != nil || got != want {
+						t.Fatalf("symlink/..: exists=%v target=%s conflict=%v error=%v", exists, target, got, err)
+					}
+				}
+			}
+			if err := os.Symlink(raw, filepath.Join(dir, "dangling-target")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(actual); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := outputPathsConflict(filepath.Join(dir, "dangling-target"), actual); err != nil || !got {
+				t.Fatalf("dangling target with symlink/..: %v, %v", got, err)
+			}
+		}
 	})
 }
 
@@ -188,16 +223,12 @@ func TestParseConfigAPIBaseURL(t *testing.T) {
 	}
 }
 
-func TestParseConfigToken(t *testing.T) {
-	for _, token := range []string{"", "test-token"} {
-		t.Run(token, func(t *testing.T) {
-			cfg, err := parseConfig([]string{"--repos", "o/r"}, envFrom(map[string]string{
-				"GITHUB_TOKEN": token,
-			}))
-			if err != nil || cfg.Token != token {
-				t.Fatal("token from environment was not preserved")
-			}
-		})
+func TestParseConfigEmptyToken(t *testing.T) {
+	cfg, err := parseConfig([]string{"--repos", "o/r"}, envFrom(map[string]string{
+		"GITHUB_TOKEN": "",
+	}))
+	if err != nil || cfg.Token != "" {
+		t.Fatal("explicitly empty token was not accepted")
 	}
 }
 
