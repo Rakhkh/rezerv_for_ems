@@ -1,6 +1,16 @@
 package main
 
+import (
+	"encoding/json"
+	"io"
+	"os"
+)
+
 type repoError string
+
+func (e repoError) Error() string {
+	return string(e)
+}
 
 const (
 	repoNotFound        repoError = "not_found"
@@ -37,4 +47,20 @@ type issue struct {
 
 type fatalReport struct {
 	Error string `json:"error"`
+}
+
+func writeReport(path string, stdout io.Writer, result report) error {
+	if path == "-" {
+		return json.NewEncoder(stdout).Encode(result)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	encodeErr := json.NewEncoder(file).Encode(result)
+	closeErr := file.Close()
+	if encodeErr != nil {
+		return encodeErr
+	}
+	return closeErr
 }

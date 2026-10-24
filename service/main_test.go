@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -84,6 +86,71 @@ func TestCLIInvalidArguments(t *testing.T) {
 			if requests.Load() != 0 {
 				t.Fatal("invalid configuration caused an HTTP request")
 			}
+		})
+	}
+}
+
+func TestCLIReport(t *testing.T) {
+	binary := buildBinary(t)
+	for _, tt := range []struct {
+		name   string
+		body   string
+		toFile bool
+	}{
+		{"stdout", testIssuePage, false},
+		{"empty page", "[]", false},
+		{"file", testIssuePage, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, tt.body)
+			}))
+			defer server.Close()
+			dir := t.TempDir()
+			out := "-"
+			if tt.toFile {
+				out = "отчёт.json"
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, binary, "--repos", "cli/cli", "--out", out)
+			cmd.Dir, cmd.Env = dir, cliEnvironment(server.URL)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			before := time.Now().UTC().Truncate(time.Second)
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("run: %v; stderr: %s", err, stderr.String())
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("unexpected stderr: %s", stderr.String())
+			}
+			data := stdout.Bytes()
+			if tt.toFile {
+				if stdout.Len() != 0 {
+					t.Fatal("file output must leave stdout empty")
+				}
+				var err error
+				data, err = os.ReadFile(filepath.Join(dir, out))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			var result report
+			if err := json.Unmarshal(data, &result); err != nil {
+				t.Fatalf("not a single JSON report: %v", err)
+			}
+			generated, err := time.Parse(time.RFC3339, result.GeneratedAt)
+			if err != nil || !strings.HasSuffix(result.GeneratedAt, "Z") || generated.Before(before) || generated.After(time.Now().UTC()) {
+				t.Fatalf("invalid generated_at: %q", result.GeneratedAt)
+			}
+			wantIssues, count := `[]`, 0
+			if tt.body != "[]" {
+				count = 2
+				wantIssues = testReportIssues
+			}
+			assertJSON(t, json.RawMessage(data), fmt.Sprintf(`{
+				"generated_at":%q,"repos":[{"repo":"cli/cli","error":null,"count":%d,"issues":%s}]
+			}`, result.GeneratedAt, count, wantIssues))
 		})
 	}
 }
