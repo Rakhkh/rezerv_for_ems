@@ -1,11 +1,48 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestOutputPathAliases(t *testing.T) {
+	dir := testTempDir(t)
+	first := filepath.Join(dir, "output.json")
+	other := filepath.Join(dir, "other.json")
+	for _, tt := range []struct {
+		out, trace string
+		want       bool
+	}{
+		{first, first, true}, {first, other, false}, {"-", first, false}, {first, "", false},
+		{filepath.Join(dir, "missing", "out"), filepath.Join(dir, "missing", "out"), true},
+		{first, filepath.Join(dir, "OUTPUT.JSON"), runtime.GOOS == "windows"},
+	} {
+		if got, err := outputPathsConflict(tt.out, tt.trace); err != nil || got != tt.want {
+			t.Fatalf("paths %q / %q: conflict=%v, error=%v", tt.out, tt.trace, got, err)
+		}
+	}
+	t.Run("symbolic links", func(t *testing.T) {
+		alias := filepath.Join(dir, "link.json")
+		if err := os.Symlink("output.json", alias); err != nil {
+			t.Skipf("symbolic links unavailable: %v", err)
+		}
+		if got, err := outputPathsConflict(first, alias); err != nil || !got {
+			t.Fatalf("dangling symlink alias: %v, %v", got, err)
+		}
+		parentAlias := filepath.Join(dir, "parent-link")
+		if err := os.Symlink(dir, parentAlias); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := outputPathsConflict(first, filepath.Join(parentAlias, "output.json")); err != nil || !got {
+			t.Fatalf("symlink parent alias: %v, %v", got, err)
+		}
+	})
+}
 
 func envFrom(values map[string]string) func(string) (string, bool) {
 	return func(key string) (string, bool) {

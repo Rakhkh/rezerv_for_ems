@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"os"
 	"time"
 )
 
@@ -51,11 +50,13 @@ type fatalReport struct {
 	Error string `json:"error"`
 }
 
-func writeReport(path string, stdout io.Writer, result report) error {
+type outputFileCreator func(string) (io.WriteCloser, error)
+
+func writeReport(path string, stdout io.Writer, result report, create outputFileCreator) error {
 	if path == "-" {
 		return json.NewEncoder(stdout).Encode(result)
 	}
-	file, err := os.Create(path)
+	file, err := create(path)
 	if err != nil {
 		return err
 	}

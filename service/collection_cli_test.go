@@ -96,6 +96,7 @@ func testCLICollectionAndErrors(t *testing.T, binary string) {
 			args := []string{"--repos", tt.repos, "--limit", "2", "--since", "2026-01-01", "--out", "-"}
 			if tt.fatal != "" {
 				args[len(args)-1] = "report.json"
+				args = append(args, "--trace", "trace.jsonl")
 				if err := os.WriteFile(filepath.Join(dir, "report.json"), []byte("existing report"), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -126,6 +127,14 @@ func testCLICollectionAndErrors(t *testing.T, binary string) {
 				contents, err := os.ReadFile(filepath.Join(dir, "report.json"))
 				if err != nil || string(contents) != "existing report" {
 					t.Fatal("fatal result modified the output file")
+				}
+				trace, err := os.ReadFile(filepath.Join(dir, "trace.jsonl"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				records := parseTrace(t, string(trace))
+				if len(records) != len(tt.paths) || strings.Contains(string(trace), "process-test-secret") {
+					t.Fatal("fatal result lost trace or exposed token")
 				}
 			} else {
 				var result report

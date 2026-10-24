@@ -21,9 +21,24 @@ func main() {
 }
 
 func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io.Writer) int {
+	return runWithFiles(args, lookupEnv, stdout, stderr, func(path string) (io.WriteCloser, error) {
+		return os.Create(path)
+	})
+}
+
+func runWithFiles(args []string, lookupEnv func(string) (string, bool), stdout, stderr io.Writer, create outputFileCreator) int {
 	cfg, err := parseConfig(args, lookupEnv)
 	if err != nil {
 		fmt.Fprintf(stderr, "ghreport: %s\n", err)
+		return exitUsage
+	}
+	conflict, err := outputPathsConflict(cfg.Out, cfg.Trace)
+	if err != nil {
+		fmt.Fprintln(stderr, "ghreport: не удалось проверить пути отчёта и журнала")
+		return exitFatal
+	}
+	if conflict {
+		fmt.Fprintln(stderr, "ghreport: --out и --trace должны указывать на разные файлы")
 		return exitUsage
 	}
 
@@ -34,9 +49,9 @@ func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io
 		fmt.Fprintf(stderr, "ghreport: %s\n", errCache)
 		return exitFatal
 	}
-	var traceFile *os.File
+	var traceFile io.WriteCloser
 	if cfg.Trace != "" {
-		traceFile, err = os.Create(cfg.Trace)
+		traceFile, err = create(cfg.Trace)
 		if err != nil {
 			fmt.Fprintln(stderr, "ghreport: не удалось открыть журнал HTTP")
 			return exitFatal
@@ -87,7 +102,7 @@ func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io
 		return writeFatal(fatalAllFailed, stdout, stderr)
 	}
 	result.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := writeReport(cfg.Out, stdout, result); err != nil {
+	if err := writeReport(cfg.Out, stdout, result, create); err != nil {
 		fmt.Fprintln(stderr, "ghreport: не удалось записать отчёт")
 		return exitFatal
 	}
