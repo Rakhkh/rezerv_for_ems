@@ -28,14 +28,25 @@ func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io
 	}
 
 	client := newAPIClient(cfg)
-	defer client.http.CloseIdleConnections()
+	defer client.closeIdleConnections()
+	var traceFile *os.File
+	if cfg.Trace != "" {
+		traceFile, err = os.Create(cfg.Trace)
+		if err != nil {
+			fmt.Fprintln(stderr, "ghreport: не удалось открыть журнал HTTP")
+			return exitFatal
+		}
+		client.trace = json.NewEncoder(traceFile)
+	}
 	result := report{Repos: make([]repoReport, 0, len(cfg.Repos))}
 	failed := 0
+	var fatalErr error
 	for _, repo := range cfg.Repos {
 		entry := repoReport{Repo: repo, Issues: []issue{}}
 		issues, err := client.collectIssues(repo, cfg.Limit, cfg.Since)
-		if errors.Is(err, errUnauthorized) {
-			return writeFatal(fatalUnauthorized, stdout, stderr)
+		if errors.Is(err, errUnauthorized) || errors.Is(err, errTrace) {
+			fatalErr = err
+			break
 		}
 		if err != nil {
 			var code repoError
@@ -49,6 +60,19 @@ func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io
 			entry.Count = len(issues)
 		}
 		result.Repos = append(result.Repos, entry)
+	}
+	if traceFile != nil {
+		if err := traceFile.Close(); err != nil {
+			fmt.Fprintln(stderr, "ghreport: не удалось закрыть журнал HTTP")
+			return exitFatal
+		}
+	}
+	if errors.Is(fatalErr, errTrace) {
+		fmt.Fprintf(stderr, "ghreport: %s\n", errTrace)
+		return exitFatal
+	}
+	if errors.Is(fatalErr, errUnauthorized) {
+		return writeFatal(fatalUnauthorized, stdout, stderr)
 	}
 	if failed == len(cfg.Repos) {
 		return writeFatal(fatalAllFailed, stdout, stderr)

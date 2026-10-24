@@ -28,6 +28,9 @@ func TestCLI(t *testing.T) {
 	t.Run("CollectionAndErrors", func(t *testing.T) {
 		testCLICollectionAndErrors(t, binary)
 	})
+	t.Run("ResilienceAndTrace", func(t *testing.T) {
+		testCLIResilienceAndTrace(t, binary)
+	})
 }
 
 func testCLIInvalidArguments(t *testing.T, binary string) {

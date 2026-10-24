@@ -58,7 +58,7 @@ func TestCollectIssuesPaginationAndSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := newAPIClient(cfg)
-	defer client.http.CloseIdleConnections()
+	defer client.closeIdleConnections()
 	issues, err := client.collectIssues("stub/alpha", cfg.Limit, cfg.Since)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestCollectIssuesCycleAndEarlyStop(t *testing.T) {
 				t.Fatal(err)
 			}
 			client := newAPIClient(cfg)
-			defer client.http.CloseIdleConnections()
+			defer client.closeIdleConnections()
 			issues, err := client.collectIssues("stub/alpha", limit, nil)
 			if limit == 1 {
 				if err != nil || len(issues) != 1 {
@@ -143,7 +143,7 @@ func TestPaginationDoesNotForwardTokenToAnotherOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := newAPIClient(cfg)
-	defer client.http.CloseIdleConnections()
+	defer client.closeIdleConnections()
 	issues, err := client.collectIssues("stub/alpha", 100, nil)
 	if err != nil || issues == nil || len(issues) != 0 || targetRequests.Load() != 1 {
 		t.Fatalf("unexpected result: %v, %v", issues, err)

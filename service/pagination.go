@@ -49,16 +49,10 @@ func nextPage(headers []string, current *url.URL) (*url.URL, error) {
 				if !strings.EqualFold(relation, "next") {
 					continue
 				}
-				reference, err := url.Parse(target)
+				address, err := resolveAPIReference(target, current)
 				if err != nil {
-					return nil, repoInvalidResponse
+					return nil, err
 				}
-				address := current.ResolveReference(reference)
-				if (address.Scheme != "http" && address.Scheme != "https") ||
-					address.Hostname() == "" || address.User != nil || address.Opaque != "" {
-					return nil, repoInvalidResponse
-				}
-				address.Fragment, address.RawFragment = "", ""
 				if next != nil && next.String() != address.String() {
 					return nil, repoInvalidResponse
 				}

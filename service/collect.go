@@ -20,6 +20,12 @@ func (c *apiClient) collectIssues(repo string, limit int, since *time.Time) ([]i
 		if err != nil {
 			return nil, err
 		}
+		if final := page.address.String(); final != key {
+			if visited[final] {
+				return nil, repoInvalidResponse
+			}
+			visited[final] = true
+		}
 		for _, item := range page.issues {
 			if seen[item.Number] || since != nil && item.created.Before(*since) {
 				continue
@@ -33,7 +39,7 @@ func (c *apiClient) collectIssues(repo string, limit int, since *time.Time) ([]i
 		if len(issues) == limit {
 			break
 		}
-		address, err = nextPage(page.links, address)
+		address, err = nextPage(page.links, page.address)
 		if err != nil {
 			return nil, err
 		}

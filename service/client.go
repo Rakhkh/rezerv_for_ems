@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -14,21 +16,29 @@ import (
 var errUnauthorized = errors.New(fatalUnauthorized)
 
 type apiClient struct {
-	base  *url.URL
-	token string
-	http  *http.Client
+	base      *url.URL
+	token     string
+	transport http.RoundTripper
+	timeout   time.Duration
+	now       func() time.Time
+	sleep     func(time.Duration)
+	trace     *json.Encoder
+	permanent map[string]*url.URL
 }
 
 func newAPIClient(cfg config) *apiClient {
 	return &apiClient{
 		base: cfg.APIBaseURL, token: cfg.Token,
-		http: &http.Client{
-			Timeout: 30 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				// Explicit redirects and their trace records are added in stage 4.
-				return http.ErrUseLastResponse
-			},
-		},
+		now: time.Now, sleep: time.Sleep,
+		permanent: make(map[string]*url.URL),
+		transport: http.DefaultTransport.(*http.Transport).Clone(),
+		timeout:   30 * time.Second,
+	}
+}
+
+func (c *apiClient) closeIdleConnections() {
+	if transport, ok := c.transport.(interface{ CloseIdleConnections() }); ok {
+		transport.CloseIdleConnections()
 	}
 }
 
@@ -43,14 +53,57 @@ func (c *apiClient) issuesURL(repo string) *url.URL {
 }
 
 type issuePage struct {
-	issues []issue
-	links  []string
+	issues  []issue
+	links   []string
+	address *url.URL
 }
 
 func (c *apiClient) fetchPage(address *url.URL) (issuePage, error) {
-	req, err := http.NewRequest(http.MethodGet, address.String(), nil)
+	visited := make(map[string]bool)
+	redirects := 0
+	for {
+		key := address.String()
+		if visited[key] {
+			return issuePage{}, repoRequestFailed
+		}
+		visited[key] = true
+		target := c.permanent[key]
+		if target == nil {
+			response, err := c.requestWithRetries(address)
+			if err != nil {
+				return issuePage{}, err
+			}
+			target = response.redirect
+			if target == nil {
+				return issuePage{issues: response.issues, links: response.header.Values("Link"), address: address}, nil
+			}
+			if response.status == http.StatusMovedPermanently && !visited[target.String()] && redirects < 10 {
+				c.permanent[key] = target
+			}
+		}
+		if redirects == 10 {
+			return issuePage{}, repoRequestFailed
+		}
+		redirects++
+		address = target
+	}
+}
+
+type apiResponse struct {
+	status   int
+	header   http.Header
+	body     []byte
+	issues   []issue
+	redirect *url.URL
+}
+
+// requestOnce closes the response body before any retry or wait.
+func (c *apiClient) requestOnce(address *url.URL) (apiResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address.String(), nil)
 	if err != nil {
-		return issuePage{}, repoRequestFailed
+		return apiResponse{}, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "ghreport/1.0")
@@ -58,32 +111,46 @@ func (c *apiClient) fetchPage(address *url.URL) (issuePage, error) {
 	if c.token != "" && sameOrigin(address, c.base) {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	resp, err := c.http.Do(req)
+	// Client.Do parses Location before CheckRedirect; RoundTrip leaves it intact.
+	resp, err := c.transport.RoundTrip(req)
 	if err != nil {
-		return issuePage{}, repoRequestFailed
+		return apiResponse{}, err
 	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusUnauthorized:
-		return issuePage{}, errUnauthorized
-	case http.StatusNotFound:
-		return issuePage{}, repoNotFound
-	case http.StatusNotModified:
-		// Until stage 5 no conditional request can justify a 304 response.
-		return issuePage{}, repoInvalidResponse
-	default:
-		return issuePage{}, repoRequestFailed
+	result := apiResponse{status: resp.StatusCode, header: resp.Header}
+	// Only successful pages and rate-limit messages need a response body.
+	readBody := resp.StatusCode == http.StatusOK ||
+		(resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) &&
+			!isRateLimited(resp.StatusCode, resp.Header, nil)
+	if !readBody {
+		resp.Body.Close()
+		return result, nil
 	}
-	body, err := io.ReadAll(resp.Body)
+	result.body, err = io.ReadAll(resp.Body)
+	closeErr := resp.Body.Close()
+	if err == nil {
+		err = closeErr
+	}
+	return result, err
+}
+
+func resolveAPIReference(value string, current *url.URL) (*url.URL, error) {
+	reference, err := url.Parse(value)
 	if err != nil {
-		return issuePage{}, repoRequestFailed
+		return nil, repoInvalidResponse
 	}
-	issues, err := decodeIssues(body)
-	if err != nil {
-		return issuePage{}, err
+	address := current.ResolveReference(reference)
+	if (address.Scheme != "http" && address.Scheme != "https") ||
+		address.Hostname() == "" || address.User != nil || address.Opaque != "" {
+		return nil, repoInvalidResponse
 	}
-	return issuePage{issues: issues, links: resp.Header.Values("Link")}, nil
+	if port := address.Port(); port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			return nil, repoInvalidResponse
+		}
+	}
+	address.Fragment, address.RawFragment = "", ""
+	return address, nil
 }
 
 func sameOrigin(a, b *url.URL) bool {

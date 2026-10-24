@@ -68,7 +68,7 @@ func TestAPIClientRequestAndPage(t *testing.T) {
 				t.Fatal(err)
 			}
 			client := newAPIClient(cfg)
-			defer client.http.CloseIdleConnections()
+			defer client.closeIdleConnections()
 			page, err := client.fetchPage(client.issuesURL("cli/cli"))
 			if err != nil {
 				t.Fatal(err)
@@ -83,7 +83,12 @@ func TestAPIClientRequestAndPage(t *testing.T) {
 
 func TestAPIClientBodyTimeout(t *testing.T) {
 	headersSent := make(chan struct{})
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) > 1 {
+			fmt.Fprint(w, "[]")
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		w.(http.Flusher).Flush()
 		close(headersSent)
@@ -95,13 +100,18 @@ func TestAPIClientBodyTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := newAPIClient(config{APIBaseURL: base})
-	defer client.http.CloseIdleConnections()
-	if client.http.Timeout != 30*time.Second {
-		t.Fatalf("request timeout = %s, want 30s", client.http.Timeout)
+	defer client.closeIdleConnections()
+	if client.timeout != 30*time.Second {
+		t.Fatalf("request timeout = %s, want 30s", client.timeout)
 	}
-	client.http.Timeout = 250 * time.Millisecond
-	if _, err := client.fetchPage(client.issuesURL("cli/cli")); !errors.Is(err, repoRequestFailed) {
-		t.Fatalf("body timeout error = %v, want request_failed", err)
+	client.timeout = 250 * time.Millisecond
+	var waits []time.Duration
+	client.sleep = func(delay time.Duration) { waits = append(waits, delay) }
+	if _, err := client.fetchPage(client.issuesURL("cli/cli")); err != nil {
+		t.Fatalf("body timeout should recover on retry: %v", err)
+	}
+	if requests.Load() != 2 || !reflect.DeepEqual(waits, []time.Duration{time.Second}) {
+		t.Fatalf("timeout retry: requests=%d, waits=%v", requests.Load(), waits)
 	}
 	select {
 	case <-headersSent:
@@ -135,7 +145,8 @@ func TestAPIClientErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			client := newAPIClient(config{APIBaseURL: base})
-			defer client.http.CloseIdleConnections()
+			client.sleep = func(time.Duration) {}
+			defer client.closeIdleConnections()
 			if _, err := client.fetchPage(client.issuesURL("cli/cli")); !errors.Is(err, tt.want) {
 				t.Fatalf("error = %v, want %v", err, tt.want)
 			}
