@@ -33,7 +33,7 @@ func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io
 	failed := 0
 	for _, repo := range cfg.Repos {
 		entry := repoReport{Repo: repo, Issues: []issue{}}
-		issues, err := client.listIssues(repo)
+		issues, err := client.collectIssues(repo, cfg.Limit, cfg.Since)
 		if errors.Is(err, errUnauthorized) {
 			return writeFatal(fatalUnauthorized, stdout, stderr)
 		}

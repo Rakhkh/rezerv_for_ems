@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"time"
 )
 
 type repoError string
@@ -43,6 +44,7 @@ type issue struct {
 	Labels    []string `json:"labels"`
 	CreatedAt string   `json:"created_at"`
 	URL       string   `json:"url"`
+	created   time.Time
 }
 
 type fatalReport struct {

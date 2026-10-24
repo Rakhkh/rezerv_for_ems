@@ -17,8 +17,20 @@ import (
 	"time"
 )
 
-func TestCLIInvalidArguments(t *testing.T) {
+func TestCLI(t *testing.T) {
 	binary := buildBinary(t)
+	t.Run("InvalidArguments", func(t *testing.T) {
+		testCLIInvalidArguments(t, binary)
+	})
+	t.Run("Report", func(t *testing.T) {
+		testCLIReport(t, binary)
+	})
+	t.Run("CollectionAndErrors", func(t *testing.T) {
+		testCLICollectionAndErrors(t, binary)
+	})
+}
+
+func testCLIInvalidArguments(t *testing.T, binary string) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -90,8 +102,7 @@ func TestCLIInvalidArguments(t *testing.T) {
 	}
 }
 
-func TestCLIReport(t *testing.T) {
-	binary := buildBinary(t)
+func testCLIReport(t *testing.T, binary string) {
 	for _, tt := range []struct {
 		name   string
 		body   string

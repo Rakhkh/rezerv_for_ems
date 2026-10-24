@@ -69,14 +69,14 @@ func TestAPIClientRequestAndPage(t *testing.T) {
 			}
 			client := newAPIClient(cfg)
 			defer client.http.CloseIdleConnections()
-			issues, err := client.listIssues("cli/cli")
+			page, err := client.fetchPage(client.issuesURL("cli/cli"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if requests.Load() != 1 {
 				t.Fatalf("requests = %d, want 1", requests.Load())
 			}
-			assertJSON(t, issues, testReportIssues)
+			assertJSON(t, page.issues, testReportIssues)
 		})
 	}
 }
@@ -100,7 +100,7 @@ func TestAPIClientBodyTimeout(t *testing.T) {
 		t.Fatalf("request timeout = %s, want 30s", client.http.Timeout)
 	}
 	client.http.Timeout = 250 * time.Millisecond
-	if _, err := client.listIssues("cli/cli"); !errors.Is(err, repoRequestFailed) {
+	if _, err := client.fetchPage(client.issuesURL("cli/cli")); !errors.Is(err, repoRequestFailed) {
 		t.Fatalf("body timeout error = %v, want request_failed", err)
 	}
 	select {
@@ -120,6 +120,7 @@ func TestAPIClientErrors(t *testing.T) {
 		{"unauthorized", 401, "private error body", errUnauthorized},
 		{"not found", 404, "private error body", repoNotFound},
 		{"server failure", 500, "private error body", repoRequestFailed},
+		{"unconditional 304", 304, "", repoInvalidResponse},
 		{"broken JSON", 200, "[", repoInvalidResponse},
 		{"wrong structure", 200, "null", repoInvalidResponse},
 	} {
@@ -135,7 +136,7 @@ func TestAPIClientErrors(t *testing.T) {
 			}
 			client := newAPIClient(config{APIBaseURL: base})
 			defer client.http.CloseIdleConnections()
-			if _, err := client.listIssues("cli/cli"); !errors.Is(err, tt.want) {
+			if _, err := client.fetchPage(client.issuesURL("cli/cli")); !errors.Is(err, tt.want) {
 				t.Fatalf("error = %v, want %v", err, tt.want)
 			}
 		})
