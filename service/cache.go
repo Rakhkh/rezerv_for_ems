@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -76,6 +77,11 @@ func (c *pageCache) load(address *url.URL) (*cacheEntry, error) {
 		c.warn("повреждённая запись кэша пропущена")
 		return nil, nil
 	}
+	// Remove an unsafe disk copy, but retain this valid entry in memory for
+	// the current conditional request. A 304 still reaches report validation.
+	if _, err := c.rejectReflectedToken(data, address); err != nil {
+		return nil, err
+	}
 	return &entry, nil
 }
 
@@ -112,17 +118,8 @@ func (c *pageCache) store(entry cacheEntry) error {
 	if err != nil {
 		return errCache
 	}
-	// A compatible API may reflect the credential in a URL or response metadata.
-	// Do not persist it, even though request headers are never stored here.
-	if c.token != "" {
-		encodedToken, _ := json.Marshal(c.token)
-		if bytes.Contains(data, encodedToken[1:len(encodedToken)-1]) {
-			if err := os.Remove(c.path(address)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return errCache
-			}
-			c.warn("ответ с отражённым токеном не сохранён в кэш")
-			return nil
-		}
+	if rejected, err := c.rejectReflectedToken(data, address); rejected || err != nil {
+		return err
 	}
 	file, err := os.CreateTemp(c.dir, ".ghreport-*.tmp")
 	if err != nil {
@@ -141,4 +138,33 @@ func (c *pageCache) store(entry cacheEntry) error {
 		return errCache
 	}
 	return nil
+}
+
+// Inspect every decoded JSON string, including unknown fields, object keys and
+// duplicate keys. Unmarshalling into a map would hide overwritten key values.
+func (c *pageCache) rejectReflectedToken(data []byte, address *url.URL) (bool, error) {
+	if c.token == "" {
+		return false, nil
+	}
+	encodedToken, _ := json.Marshal(c.token)
+	found := bytes.Contains(data, encodedToken[1:len(encodedToken)-1])
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber() // Unknown numeric fields need not fit in float64.
+	for !found {
+		value, err := decoder.Token()
+		if err == io.EOF {
+			return false, nil
+		}
+		if err != nil {
+			return false, errCache
+		}
+		if value, ok := value.(string); ok {
+			found = strings.Contains(value, c.token)
+		}
+	}
+	if err := os.Remove(c.path(address)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, errCache
+	}
+	c.warn("ответ с отражённым токеном не сохранён в кэш")
+	return true, nil
 }

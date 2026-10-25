@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from .helpers.checks import timestamp_key, trace_records
+from .helpers.checks import check_json_no_token, timestamp_key, trace_records
 
 
 def trace_record():
@@ -53,3 +53,20 @@ def test_timestamp_accepts_offset_boundaries_without_losing_precision():
     assert timestamp_key("2026-01-01T00:00:00.123456789-23:59") == timestamp_key(
         "2026-01-01T23:59:00.123456789Z"
     )
+
+
+@pytest.mark.parametrize("extra", [
+    r'"metadata":"prefix \u0073\u0065\u0063\u0072\u0065\u0074 suffix"',
+    r'"metadata":{"nested":["\u0073\u0065\u0063\u0072\u0065\u0074"]}',
+    r'"\u0073\u0065\u0063\u0072\u0065\u0074":"value"',
+    r'"metadata":"\u0073\u0065\u0063\u0072\u0065\u0074","metadata":"overwritten"',
+], ids=["value", "nested", "key", "duplicate-key"])
+def test_json_token_check_preserves_all_decoded_strings(extra):
+    text = "{" + extra + "}"
+    assert "secret" not in text, "Regression must exercise JSON escaping"
+    with pytest.raises(AssertionError, match="API token leaked"):
+        check_json_no_token("secret", text)
+
+
+def test_json_token_check_allows_safe_data_and_large_unknown_numbers():
+    check_json_no_token("secret", '{"metadata":1e1000,"metadata":{"value":"safe"}}')

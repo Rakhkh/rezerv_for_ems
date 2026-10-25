@@ -254,7 +254,7 @@ func decodeIssues(body []byte) ([]issue, error) {
 			entry.User.Login == nil || entry.Labels == nil || entry.CreatedAt == nil || entry.HTMLURL == nil {
 			return nil, repoInvalidResponse
 		}
-		created, err := time.Parse(time.RFC3339, *entry.CreatedAt)
+		created, remainder, err := parseCreationTime(*entry.CreatedAt)
 		if err != nil {
 			return nil, repoInvalidResponse
 		}
@@ -268,7 +268,7 @@ func decodeIssues(body []byte) ([]issue, error) {
 		issues = append(issues, issue{
 			Number: *entry.Number, Title: *entry.Title, Author: *entry.User.Login,
 			Labels: labels, CreatedAt: *entry.CreatedAt, URL: *entry.HTMLURL,
-			created: created,
+			created: created, subNanosecond: remainder,
 		})
 	}
 	return issues, nil

@@ -117,6 +117,24 @@ def check_no_token(token: str | None, *values):
             pending.extend(value)
 
 
+def check_json_no_token(token: str | None, text: str):
+    """Inspect raw JSON and every decoded key/value, preserving duplicate keys."""
+    check_no_token(token, text)
+
+    def invalid_constant(value):
+        raise ValueError("Non-JSON numeric constant")
+
+    try:
+        # Keep objects as pairs: dict construction would erase overwritten values.
+        decoded = json.loads(
+            text, object_pairs_hook=list, parse_float=Decimal,
+            parse_constant=invalid_constant,
+        )
+    except ValueError:
+        raise AssertionError("Expected valid JSON for token inspection") from None
+    check_no_token(token, decoded)
+
+
 def trace_records(text: str) -> list[dict]:
     """Validate trace fields without assuming the API's pages or responses."""
     # Preserve the raw guard as well: decoding may discard duplicate JSON keys.

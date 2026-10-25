@@ -1,3 +1,5 @@
-.vscode/
+/.vscode/
+/build*/
 /service/ghreport-cache/
 /.pytest_cache/
+

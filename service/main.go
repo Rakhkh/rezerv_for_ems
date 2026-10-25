@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"time"
 )
@@ -17,6 +18,9 @@ const (
 )
 
 func main() {
+	// net/http may log raw peer bytes through the process-wide default logger.
+	// All CLI diagnostics use the explicit, sanitized stderr path instead.
+	log.SetOutput(io.Discard)
 	os.Exit(run(os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr))
 }
 

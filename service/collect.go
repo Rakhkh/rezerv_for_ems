@@ -49,6 +49,9 @@ func (c *apiClient) collectIssues(repo string, limit int, since *time.Time) ([]i
 	}
 	sort.Slice(issues, func(i, j int) bool {
 		if issues[i].created.Equal(issues[j].created) {
+			if issues[i].subNanosecond != issues[j].subNanosecond {
+				return issues[i].subNanosecond < issues[j].subNanosecond
+			}
 			return issues[i].Number < issues[j].Number
 		}
 		return issues[i].created.Before(issues[j].created)

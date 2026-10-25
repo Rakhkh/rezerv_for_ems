@@ -6,6 +6,7 @@ import pytest
 
 from ..helpers.checks import (
     check_generated_at,
+    check_json_no_token,
     check_no_token,
     check_report,
     json_object,
@@ -312,4 +313,4 @@ def test_file_report_combines_cache_retry_and_partial_failure(
         "/repos/stub/missing/issues",
     ]
     for path in cache_dir.iterdir():
-        check_no_token(api_token, path.read_text(encoding="utf-8"))
+        check_json_no_token(api_token, path.read_text(encoding="utf-8"))

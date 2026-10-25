@@ -74,3 +74,51 @@ func TestDecodeIssuesValidation(t *testing.T) {
 		t.Fatalf("creation time was not parsed: %v, %v", issues, err)
 	}
 }
+
+func TestCollectIssuesExactCreationTime(t *testing.T) {
+	values := []struct {
+		number int64
+		date   string
+	}{
+		{2, "2026-01-01T00:00:00.0000000001Z"},
+		{1, "2026-01-01t00:00:00.0000000002z"},
+		{4, "2026-01-01T03:00:00.000000000200+03:00"},
+		{3, "2026-01-01T00:00:00.000000000201Z"},
+		{6, "2026-01-01T00:00:00.1234567890000000000001Z"},
+		{5, "2026-01-01T00:00:00.1234567890000000000002Z"},
+		{7, "2025-12-31t23:59:59.999999999999999999999z"},
+	}
+	var items []string
+	for _, value := range values {
+		items = append(items, testIssue(value.number, value.date, "issue"))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, testPage(items...))
+	}))
+	defer server.Close()
+	cfg, err := parseConfig([]string{"--repos", "stub/alpha", "--since", "2026-01-01"},
+		envFrom(map[string]string{"GITHUB_API_BASE_URL": server.URL}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newAPIClient(cfg)
+	defer client.closeIdleConnections()
+	issues, err := client.collectIssues("stub/alpha", cfg.Limit, cfg.Since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int64{2, 1, 4, 3, 6, 5}
+	if len(issues) != len(want) {
+		t.Fatalf("selected %d issues, want %d", len(issues), len(want))
+	}
+	for i, number := range want {
+		if issues[i].Number != number {
+			t.Fatalf("issue %d: number=%d, want=%d", i, issues[i].Number, number)
+		}
+		for _, value := range values {
+			if value.number == number && issues[i].CreatedAt != value.date {
+				t.Fatal("original created_at was changed")
+			}
+		}
+	}
+}
