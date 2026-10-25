@@ -1,10 +1,6 @@
 package main
 
-import (
-	"encoding/json"
-	"reflect"
-	"testing"
-)
+import "testing"
 
 func TestReportContainsToken(t *testing.T) {
 	const token = "private<&\"-token"
@@ -31,23 +27,5 @@ func TestReportContainsToken(t *testing.T) {
 				t.Fatal("token in report value was not detected")
 			}
 		})
-	}
-}
-
-func assertJSON(t *testing.T, value any, want string) {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var gotJSON, wantJSON any
-	if err := json.Unmarshal(data, &gotJSON); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal([]byte(want), &wantJSON); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(gotJSON, wantJSON) {
-		t.Fatalf("JSON does not match contract:\ngot: %s\nwant: %s", data, want)
 	}
 }

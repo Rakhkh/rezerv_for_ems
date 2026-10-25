@@ -23,16 +23,20 @@ class Response:
     status: int
     body: bytes = b""
     headers: Mapping[str, str] = field(default_factory=dict)
+    # Optional bounded callback after flushing all but the final body byte.
+    before_body_end: Callable[[], None] | None = field(default=None, repr=False)
 
     @classmethod
     def json(
         cls, value: object, *, status: int = 200,
         headers: Mapping[str, str] | None = None,
+        before_body_end: Callable[[], None] | None = None,
     ) -> "Response":
         return cls(
             status,
             json.dumps(value, ensure_ascii=False).encode("utf-8"),
             {"Content-Type": "application/json; charset=utf-8", **(headers or {})},
+            before_body_end,
         )
 
 
@@ -113,7 +117,15 @@ class MockServer:
                         self.send_header("Content-Length", str(len(response.body)))
                     self.end_headers()
                     if self.command != "HEAD":
-                        self.wfile.write(response.body)
+                        if response.before_body_end is None:
+                            self.wfile.write(response.body)
+                        else:
+                            if not response.body:
+                                raise ValueError("Holding a response requires a nonempty body")
+                            self.wfile.write(response.body[:-1])
+                            self.wfile.flush()
+                            response.before_body_end()
+                            self.wfile.write(response.body[-1:])
                 except (BrokenPipeError, ConnectionResetError):
                     # A timed-out client may close before a prepared reply.
                     pass

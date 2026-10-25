@@ -27,6 +27,10 @@ def timestamp_key(value: str, *, utc: bool = False) -> tuple[int, Decimal]:
     zone = match["zone"]
     if zone.upper() == "Z":
         zone = "+00:00"
+    # fromisoformat normalizes e.g. +00:99 instead of rejecting its minutes.
+    assert int(zone[1:3]) <= 23 and int(zone[4:6]) <= 59, (
+        "Timestamp has an invalid timezone offset"
+    )
     try:
         whole = datetime.fromisoformat(
             match["date"] + "T" + match["time"] + zone
@@ -115,10 +119,21 @@ def check_no_token(token: str | None, *values):
 
 def trace_records(text: str) -> list[dict]:
     """Validate trace fields without assuming the API's pages or responses."""
+    # Preserve the raw guard as well: decoding may discard duplicate JSON keys.
     assert not re.search(r'"authorization"\s*:', text, re.IGNORECASE), (
         "Authorization header appeared in trace"
     )
     records = [json_object(line) for line in text.splitlines()]
+    pending = list(records)
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            assert all(key.lower() != "authorization" for key in value), (
+                "Authorization header appeared in trace"
+            )
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
     for record in records:
         assert {
             "ts", "method", "url", "status", "attempt", "from_cache", "error"
