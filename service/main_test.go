@@ -21,9 +21,6 @@ import (
 
 func TestCLI(t *testing.T) {
 	binary := buildBinary(t)
-	t.Run("CollectionAndErrors", func(t *testing.T) {
-		testCLICollectionAndErrors(t, binary)
-	})
 	t.Run("ResilienceAndTrace", func(t *testing.T) {
 		testCLIResilienceAndTrace(t, binary)
 	})

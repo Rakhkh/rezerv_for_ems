@@ -4,8 +4,11 @@ import json
 import re
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Sequence
+from urllib.parse import urlsplit
 
 from .runner import RunResult
+from .server import Request
 
 
 _RFC3339 = re.compile(
@@ -97,3 +100,27 @@ def check_generated_at(report: dict, result: RunResult):
 def check_no_token(token: str | None, *texts: str):
     if token:
         assert all(token not in text for text in texts), "API token leaked"
+
+
+def check_trace(text: str, base_url: str, requests: Sequence[Request]) -> list[dict]:
+    """Validate JSON Lines and correlate each record with an observed request."""
+    assert not re.search(r'"authorization"\s*:', text, re.IGNORECASE), (
+        "Authorization header appeared in trace"
+    )
+    records = [json_object(line) for line in text.splitlines()]
+    assert len(records) == len(requests), "Trace missed or added HTTP attempts"
+    for record, request in zip(records, requests):
+        assert {
+            "ts", "method", "url", "status", "attempt", "from_cache", "error"
+        } <= record.keys()
+        timestamp_key(record["ts"], utc=True)
+        assert record["method"] == request.method == "GET"
+        assert isinstance(record["url"], str)
+        address = urlsplit(record["url"])
+        assert address.scheme in {"http", "https"} and address.netloc
+        assert record["url"] == base_url + request.target
+        assert type(record["status"]) is int and record["status"] >= 0
+        assert type(record["attempt"]) is int and record["attempt"] >= 1
+        assert type(record["from_cache"]) is bool
+        assert record["error"] is None or isinstance(record["error"], str)
+    return records

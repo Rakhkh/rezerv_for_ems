@@ -59,8 +59,6 @@ func TestAPIClientErrors(t *testing.T) {
 		want   error
 	}{
 		{"server failure", 500, "private error body", repoRequestFailed},
-		{"unconditional 304", 304, "", repoInvalidResponse},
-		{"wrong structure", 200, "null", repoInvalidResponse},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

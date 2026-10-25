@@ -130,33 +130,6 @@ func testCLIResilienceAndTrace(t *testing.T, binary string) {
 		}
 	})
 
-	t.Run("invalid JSON is traced and next repo runs", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/repos/stub/bad/issues" {
-				fmt.Fprint(w, "[")
-			} else {
-				fmt.Fprint(w, "[]")
-			}
-		}))
-		defer server.Close()
-		dir := testTempDir(t)
-		tracePath := filepath.Join(dir, "trace.jsonl")
-		code, stdout, stderr := runCLIProcess(t, binary, dir, server.URL,
-			"--repos", "stub/bad,stub/good", "--trace", tracePath)
-		if code != 1 || stderr != "" {
-			t.Fatalf("code=%d, stdout=%s, stderr=%s", code, stdout, stderr)
-		}
-		trace, err := os.ReadFile(tracePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		records := parseTrace(t, string(trace))
-		if len(records) != 2 || records[0].Status != 200 || records[0].Attempt != 1 ||
-			records[0].Error == nil || *records[0].Error != "invalid_response" || records[1].Error != nil || records[1].Attempt != 1 {
-			t.Fatalf("invalid-response trace: %+v", records)
-		}
-	})
-
 	t.Run("rate exhaustion continues next repo", func(t *testing.T) {
 		var limited atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

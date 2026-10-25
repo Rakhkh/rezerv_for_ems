@@ -25,11 +25,14 @@ class Response:
     headers: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
-    def json(cls, value: object, *, status: int = 200) -> "Response":
+    def json(
+        cls, value: object, *, status: int = 200,
+        headers: Mapping[str, str] | None = None,
+    ) -> "Response":
         return cls(
             status,
             json.dumps(value, ensure_ascii=False).encode("utf-8"),
-            {"Content-Type": "application/json; charset=utf-8"},
+            {"Content-Type": "application/json; charset=utf-8", **(headers or {})},
         )
 
 
