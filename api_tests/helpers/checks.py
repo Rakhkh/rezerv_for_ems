@@ -97,30 +97,64 @@ def check_generated_at(report: dict, result: RunResult):
     assert generated <= timestamp_key(result.finished_at.isoformat())
 
 
-def check_no_token(token: str | None, *texts: str):
-    if token:
-        assert all(token not in text for text in texts), "API token leaked"
+def check_no_token(token: str | None, *values):
+    """Check raw output and decoded JSON, including escaped string values."""
+    if not token:
+        return
+    pending = list(values)
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            assert token not in value, "API token leaked"
+        elif isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple)):
+            pending.extend(value)
 
 
-def check_trace(text: str, base_url: str, requests: Sequence[Request]) -> list[dict]:
-    """Validate JSON Lines and correlate each record with an observed request."""
+def trace_records(text: str) -> list[dict]:
+    """Validate trace fields without assuming the API's pages or responses."""
     assert not re.search(r'"authorization"\s*:', text, re.IGNORECASE), (
         "Authorization header appeared in trace"
     )
     records = [json_object(line) for line in text.splitlines()]
-    assert len(records) == len(requests), "Trace missed or added HTTP attempts"
-    for record, request in zip(records, requests):
+    for record in records:
         assert {
             "ts", "method", "url", "status", "attempt", "from_cache", "error"
         } <= record.keys()
         timestamp_key(record["ts"], utc=True)
-        assert record["method"] == request.method == "GET"
+        assert record["method"] == "GET"
         assert isinstance(record["url"], str)
         address = urlsplit(record["url"])
         assert address.scheme in {"http", "https"} and address.netloc
-        assert record["url"] == base_url + request.target
         assert type(record["status"]) is int and record["status"] >= 0
         assert type(record["attempt"]) is int and record["attempt"] >= 1
         assert type(record["from_cache"]) is bool
         assert record["error"] is None or isinstance(record["error"], str)
     return records
+
+
+def check_trace(text: str, base_url: str, requests: Sequence[Request]) -> list[dict]:
+    """Also correlate each record with a request observed by our mock server."""
+    records = trace_records(text)
+    assert len(records) == len(requests), "Trace missed or added HTTP attempts"
+    for record, request in zip(records, requests):
+        assert record["method"] == request.method
+        assert record["url"] == base_url + request.target
+    return records
+
+
+def http_origin(value: str) -> tuple[str, str, int]:
+    """Compare origins using explicit default ports; never echo credentials."""
+    try:
+        address = urlsplit(value)
+        assert address.scheme in {"http", "https"} and address.hostname
+        assert address.username is None and address.password is None
+        port = address.port
+        assert port is None or 1 <= port <= 65535
+    except (ValueError, AssertionError):
+        raise ValueError("Expected an HTTP(S) URL without credentials") from None
+    return address.scheme, address.hostname.lower(), port or (
+        443 if address.scheme == "https" else 80
+    )
