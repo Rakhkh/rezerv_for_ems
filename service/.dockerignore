@@ -1,0 +1,7 @@
+# Only Go sources and build instructions belong in the build context.
+# This also excludes caches, reports, traces, executables and local secrets.
+**
+!go.mod
+!*.go
+!Dockerfile
+!.dockerignore
