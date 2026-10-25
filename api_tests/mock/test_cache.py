@@ -3,7 +3,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from ..helpers.checks import check_no_token, check_report, json_object
+from ..helpers.checks import check_json_no_token, check_no_token, check_report, json_object
 from ..helpers.server import Response
 
 
@@ -69,7 +69,7 @@ def test_persistent_pages_and_redirect(
     for path in cache.iterdir():
         text = path.read_text(encoding="utf-8")
         json_object(text)
-        check_no_token(api_token, text)
+        check_json_no_token(api_token, text)
         assert '"authorization"' not in text.lower()
     assert server.max_active_handlers == 1
 
@@ -226,7 +226,7 @@ def test_cache_does_not_mask_failure_or_lose_saved_page(
             "repo": "stub/good", "error": None, "count": 0, "issues": [],
         }
     for path in cache_dir.iterdir():
-        check_no_token(api_token, path.read_text(encoding="utf-8"))
+        check_json_no_token(api_token, path.read_text(encoding="utf-8"))
     records = read_trace(server, start)
     expected = {
         "server-error": [(503, n, "http_503") for n in range(1, 5)] + [(200, 1, None)],
@@ -251,3 +251,78 @@ def test_cache_does_not_mask_failure_or_lose_saved_page(
     records = read_trace(server, start)
     assert [(record["status"], record["attempt"], record["from_cache"], record["error"])
             for record in records] == [(304, 1, True, None)]
+
+
+@pytest.mark.parametrize("location", ["value", "nested", "key", "duplicate-key"])
+def test_escaped_token_in_unknown_fields_is_not_persisted(
+    location, mock_server, run_ghreport, make_issue, cache_dir, read_trace, api_token
+):
+    escaped = "".join("\\u%04x" % ord(char) for char in api_token)
+    metadata = {
+        "value": '"metadata":"' + escaped + '"',
+        "nested": '"metadata":{"nested":["prefix ' + escaped + ' suffix"]}',
+        "key": '"' + escaped + '":"value"',
+        "duplicate-key": '"metadata":"' + escaped + '","metadata":"overwritten"',
+    }[location]
+    issue = make_issue(17, "safe report")
+    body = ("[" + json.dumps(issue)[:-1] + "," + metadata + "}]").encode("utf-8")
+    phase = "clean"
+    saved_path = None
+
+    def respond(request):
+        assert urlsplit(request.target).path == "/repos/stub/alpha/issues"
+        assert request.headers.get("authorization") == (
+            None if phase == "legacy" else "Bearer " + api_token
+        )
+        assert request.headers.get("if-none-match") == {
+            "clean": None, "fresh": '"saved"', "legacy": None, "conditional": '"unsafe"',
+        }[phase]
+        if phase == "clean":
+            return Response.json([issue], headers={"ETag": '"saved"'})
+        if phase == "conditional":
+            # The disk copy is removed on load, while its validator/body remain
+            # available to this request and the report produced from a 304.
+            assert saved_path is not None and not saved_path.exists()
+            return Response(304)
+        return Response(200, body, {"Content-Type": "application/json", "ETag": '"unsafe"'})
+
+    server = mock_server(respond)
+    original = None
+    for phase in ("clean", "fresh", "legacy", "conditional"):
+        start = len(server.requests)
+        result = run_ghreport(
+            "--repos", "stub/alpha", "--trace", "trace.jsonl",
+            base_url=server.base_url, token=None if phase == "legacy" else api_token,
+        )
+        assert result.returncode == 0
+        report = json_object(result.stdout)
+        check_no_token(api_token, result.stdout, result.stderr, report)
+        check_report(report, ["stub/alpha"])
+        assert report["repos"][0]["error"] is None
+        assert report["repos"][0]["issues"] == [{
+            "number": 17, "title": "safe report", "author": "author", "labels": [],
+            "created_at": issue["created_at"], "url": issue["html_url"],
+        }]
+        comparable = {key: value for key, value in report.items() if key != "generated_at"}
+        if original is None:
+            original = comparable
+        else:
+            assert comparable == original
+        records = read_trace(server, start)
+        cached = phase == "conditional"
+        assert [(record["status"], record["attempt"], record["from_cache"], record["error"])
+                for record in records] == [(304 if cached else 200, 1, cached, None)]
+        files = list(cache_dir.iterdir())
+        if phase in {"clean", "legacy"}:
+            assert len(files) == 1
+            saved_path = files[0]
+            text = saved_path.read_text(encoding="utf-8")
+            if phase == "legacy":
+                assert api_token not in text, "Legacy setup must use JSON-escaped data"
+                with pytest.raises(AssertionError, match="API token leaked"):
+                    check_json_no_token(api_token, text)
+            else:
+                check_json_no_token(api_token, text)
+        else:
+            assert files == [], "Unsafe response or previous cache entry remained on disk"
+    assert len(server.requests) == 4

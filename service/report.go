@@ -38,13 +38,14 @@ type repoReport struct {
 }
 
 type issue struct {
-	Number    int64    `json:"number"`
-	Title     string   `json:"title"`
-	Author    string   `json:"author"`
-	Labels    []string `json:"labels"`
-	CreatedAt string   `json:"created_at"`
-	URL       string   `json:"url"`
-	created   time.Time
+	Number        int64    `json:"number"`
+	Title         string   `json:"title"`
+	Author        string   `json:"author"`
+	Labels        []string `json:"labels"`
+	CreatedAt     string   `json:"created_at"`
+	URL           string   `json:"url"`
+	created       time.Time
+	subNanosecond string
 }
 
 type fatalReport struct {

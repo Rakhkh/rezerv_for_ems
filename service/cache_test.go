@@ -191,3 +191,17 @@ func TestCacheAvoidsReflectedToken(t *testing.T) {
 		t.Fatalf("reflected token persisted or leaked: %v, %s", err, &diagnostic)
 	}
 }
+
+func TestCacheTokenCheckPreservesUnknownNumbers(t *testing.T) {
+	client := cachedTestClient(t, "http://example.invalid")
+	client.cache.token = "synthetic-review-token"
+	address := client.issuesURL("stub/alpha")
+	body := strings.TrimSuffix(testIssue(1, "2026-01-01T00:00:00Z", "safe"), "}") + `,"metadata":1e1000}`
+	entry := cacheEntry{URL: address.String(), Body: json.RawMessage(testPage(body))}
+	if err := client.cache.store(entry); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := client.cache.load(address); err != nil || got == nil || !bytes.Equal(got.Body, entry.Body) {
+		t.Fatalf("unknown numeric value was changed or rejected: %+v, %v", got, err)
+	}
+}
