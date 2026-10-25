@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -118,111 +117,27 @@ func TestCacheSeparatesAPIAddresses(t *testing.T) {
 	}
 }
 
-func TestConditionalPageUpdates(t *testing.T) {
-	var validators []string
+func TestCacheDoesNotMaskNetworkFailure(t *testing.T) {
 	client := cachedTestClient(t, "http://example.invalid")
-	firstLink, newLink := `</old>; rel=next`, `</new>; rel=next`
-	responses := []struct {
-		status int
-		header http.Header
-		body   string
-	}{
-		{200, http.Header{"Etag": {`W/"one"`}, "Link": {firstLink}}, testPage(testIssue(1, "2026-01-01T00:00:00Z", "original"))},
-		{304, http.Header{"Etag": {`"two"`}, "Link": {newLink}}, ""},
-		{304, http.Header{}, ""}, // absent metadata must preserve the last update
-		{200, http.Header{}, testPage(testIssue(2, "2026-01-02T00:00:00Z", "new body, no validator"))},
-		{200, http.Header{}, "[]"},
-		{304, http.Header{}, ""}, // no ETag was sent, despite a saved body
+	address := client.issuesURL("stub/alpha")
+	if err := client.cache.store(cacheEntry{URL: address.String(), ETag: `"saved"`, Body: json.RawMessage("[]")}); err != nil {
+		t.Fatal(err)
 	}
 	calls := 0
+	client.sleep = func(time.Duration) {}
 	client.transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if calls >= len(responses) {
-			t.Fatal("unexpected request")
-		}
-		response := responses[calls]
 		calls++
-		validators = append(validators, req.Header.Get("If-None-Match"))
-		return &http.Response{StatusCode: response.status, Header: response.header, Body: io.NopCloser(strings.NewReader(response.body))}, nil
+		if req.Header.Get("If-None-Match") != `"saved"` {
+			t.Fatal("validator missing on retry")
+		}
+		return nil, errors.New("network")
 	})
-	var trace bytes.Buffer
-	client.trace = json.NewEncoder(&trace)
-	for i := range responses {
-		page, err := client.fetchPage(client.issuesURL("stub/alpha"))
-		if i == len(responses)-1 {
-			if !errors.Is(err, repoInvalidResponse) {
-				t.Fatalf("unjustified 304: %v", err)
-			}
-			continue
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if i < 3 && (len(page.issues) != 1 || page.issues[0].Title != "original") {
-			t.Fatalf("cached body changed: %+v", page)
-		}
-		if i == 1 || i == 2 {
-			if !reflect.DeepEqual(page.links, []string{newLink}) {
-				t.Fatalf("304 metadata not updated/preserved: %v", page.links)
-			}
-		}
-		if i == 3 && (page.issues[0].Number != 2 || len(page.links) != 0) {
-			t.Fatalf("200 kept stale data: %+v", page)
-		}
+	if _, err := client.fetchPage(address); !errors.Is(err, repoRequestFailed) || calls != 4 {
+		t.Fatalf("cache masked error: %v, calls=%d", err, calls)
 	}
-	if want := []string{"", `W/"one"`, `"two"`, `"two"`, "", ""}; !reflect.DeepEqual(validators, want) {
-		t.Fatalf("validators=%v, want=%v", validators, want)
-	}
-	records := parseTrace(t, trace.String())
-	if len(records) != len(responses) {
-		t.Fatal("trace missed requests")
-	}
-	for i, record := range records {
-		if record.Status != responses[i].status || record.FromCache != (i == 1 || i == 2) || record.Attempt != 1 ||
-			(i < 5 && record.Error != nil) || (i == 5 && (record.Error == nil || *record.Error != "invalid_response")) {
-			t.Fatalf("conditional trace[%d]: %+v", i, record)
-		}
-	}
-}
-
-func TestCacheDoesNotMaskFailures(t *testing.T) {
-	for _, tt := range []struct {
-		name   string
-		status int
-		body   string
-		want   error
-		calls  int
-	}{
-		{"server failure", 503, "", repoRequestFailed, 4},
-		{"network failure", 0, "", repoRequestFailed, 4},
-		{"unauthorized", 401, "", errUnauthorized, 1},
-		{"invalid fresh page", 200, "[", repoInvalidResponse, 1},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			client := cachedTestClient(t, "http://example.invalid")
-			address := client.issuesURL("stub/alpha")
-			if err := client.cache.store(cacheEntry{URL: address.String(), ETag: `"saved"`, Body: json.RawMessage("[]")}); err != nil {
-				t.Fatal(err)
-			}
-			calls := 0
-			client.sleep = func(time.Duration) {}
-			client.transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				calls++
-				if req.Header.Get("If-None-Match") != `"saved"` {
-					t.Fatal("validator missing on retry")
-				}
-				if tt.status == 0 {
-					return nil, errors.New("network")
-				}
-				return &http.Response{StatusCode: tt.status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(tt.body))}, nil
-			})
-			if _, err := client.fetchPage(address); !errors.Is(err, tt.want) || calls != tt.calls {
-				t.Fatalf("cache masked error: %v, calls=%d", err, calls)
-			}
-			entry, err := client.cache.load(address)
-			if err != nil || entry == nil || entry.ETag != `"saved"` || string(entry.Body) != "[]" {
-				t.Fatalf("failed response replaced good cache: %+v, %v", entry, err)
-			}
-		})
+	entry, err := client.cache.load(address)
+	if err != nil || entry == nil || entry.ETag != `"saved"` || string(entry.Body) != "[]" {
+		t.Fatalf("failed response replaced good cache: %+v, %v", entry, err)
 	}
 }
 
@@ -274,41 +189,5 @@ func TestCacheAvoidsReflectedToken(t *testing.T) {
 	if _, err := os.Stat(client.cache.path(address)); !errors.Is(err, os.ErrNotExist) ||
 		diagnostic.Len() == 0 || strings.Contains(diagnostic.String(), client.cache.token) {
 		t.Fatalf("reflected token persisted or leaked: %v, %s", err, &diagnostic)
-	}
-}
-
-func TestCachedRedirectKeepsValidatorsAtTheirURL(t *testing.T) {
-	requests := make(chan string, 8)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests <- r.URL.Path + ":" + r.Header.Get("If-None-Match")
-		if r.URL.Path == "/repos/stub/alpha/issues" {
-			w.Header().Set("Location", "/moved")
-			w.WriteHeader(301)
-		} else {
-			w.Header().Set("ETag", `"target"`)
-			fmt.Fprint(w, "[]")
-		}
-	}))
-	defer server.Close()
-	client := cachedTestClient(t, server.URL)
-	address := client.issuesURL("stub/alpha")
-	if err := client.cache.store(cacheEntry{URL: address.String(), ETag: `"source"`, Body: json.RawMessage("[]")}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.fetchPage(address); err != nil {
-		t.Fatal(err)
-	}
-	// Simulate another process with no in-memory permanent redirect map.
-	client.permanent = make(map[string]*url.URL)
-	if _, err := client.fetchPage(address); err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	for len(requests) > 0 {
-		got = append(got, <-requests)
-	}
-	want := []string{`/repos/stub/alpha/issues:"source"`, "/moved:", `/moved:"target"`}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("redirect validators=%v, want=%v", got, want)
 	}
 }

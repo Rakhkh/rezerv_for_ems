@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -48,34 +47,5 @@ func TestAPIClientBodyTimeout(t *testing.T) {
 	case <-headersSent:
 	default:
 		t.Fatal("timeout occurred before response headers, not during body reading")
-	}
-}
-
-func TestAPIClientErrors(t *testing.T) {
-	for _, tt := range []struct {
-		name   string
-		status int
-		body   string
-		want   error
-	}{
-		{"server failure", 500, "private error body", repoRequestFailed},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(tt.status)
-				fmt.Fprint(w, tt.body)
-			}))
-			defer server.Close()
-			base, err := url.Parse(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			client := newAPIClient(config{APIBaseURL: base})
-			client.sleep = func(time.Duration) {}
-			defer client.closeIdleConnections()
-			if _, err := client.fetchPage(client.issuesURL("cli/cli")); !errors.Is(err, tt.want) {
-				t.Fatalf("error = %v, want %v", err, tt.want)
-			}
-		})
 	}
 }

@@ -70,6 +70,8 @@ class MockServer:
         self._lock = threading.Lock()
         self._requests: list[Request] = []
         self._errors: list[str] = []
+        self._active_handlers = 0
+        self._max_active_handlers = 0
         self._connections: set[socket.socket] = set()
         self._workers: list[threading.Thread] = []
         self._closed = False
@@ -89,6 +91,10 @@ class MockServer:
                 )
                 with owner._lock:
                     owner._requests.append(request)
+                    owner._active_handlers += 1
+                    owner._max_active_handlers = max(
+                        owner._max_active_handlers, owner._active_handlers
+                    )
                 try:
                     response = owner._handler(request)
                     if not isinstance(response, Response):
@@ -96,11 +102,15 @@ class MockServer:
                 except Exception as exc:
                     owner._record_error(f"{type(exc).__name__}: {exc}")
                     response = Response(400)
+                finally:
+                    with owner._lock:
+                        owner._active_handlers -= 1
                 try:
                     self.send_response(response.status)
                     for key, value in response.headers.items():
                         self.send_header(key, value)
-                    self.send_header("Content-Length", str(len(response.body)))
+                    if not any(key.lower() == "content-length" for key in response.headers):
+                        self.send_header("Content-Length", str(len(response.body)))
                     self.end_headers()
                     if self.command != "HEAD":
                         self.wfile.write(response.body)
@@ -136,6 +146,12 @@ class MockServer:
     def requests(self) -> tuple[Request, ...]:
         with self._lock:
             return tuple(self._requests)
+
+    @property
+    def max_active_handlers(self) -> int:
+        """Observed overlap while preparing responses, not idle connections."""
+        with self._lock:
+            return self._max_active_handlers
 
     def _record_error(self, message: str):
         with self._lock:

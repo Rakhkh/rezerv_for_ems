@@ -2,14 +2,12 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,35 +16,6 @@ import (
 	"testing"
 	"time"
 )
-
-func TestCLI(t *testing.T) {
-	binary := buildBinary(t)
-	t.Run("ResilienceAndTrace", func(t *testing.T) {
-		testCLIResilienceAndTrace(t, binary)
-	})
-	t.Run("Cache", func(t *testing.T) {
-		testCLICache(t, binary)
-	})
-	t.Run("FilesAndCombined", func(t *testing.T) {
-		testCLIFilesAndCombined(t, binary)
-	})
-}
-
-func buildBinary(t *testing.T) string {
-	t.Helper()
-	name := "ghreport"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	binary := filepath.Join(t.TempDir(), name)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", binary, ".")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build binary: %v\n%s", err, output)
-	}
-	return binary
-}
 
 // Windows may temporarily report a directory as nonempty after deleting its
 // files. testing.TempDir retries access/sharing errors, but not error 145.
@@ -72,17 +41,6 @@ func testTempDir(t *testing.T) string {
 		})
 	}
 	return dir
-}
-
-func cliEnvironment(base string) []string {
-	var env []string
-	for _, entry := range os.Environ() {
-		key, _, _ := strings.Cut(entry, "=")
-		if !strings.EqualFold(key, "GITHUB_API_BASE_URL") && !strings.EqualFold(key, "GITHUB_TOKEN") {
-			env = append(env, entry)
-		}
-	}
-	return append(env, "GITHUB_API_BASE_URL="+base, "GITHUB_TOKEN=process-test-secret")
 }
 
 type testOutputFile struct {

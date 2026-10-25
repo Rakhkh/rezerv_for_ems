@@ -1,5 +1,6 @@
 import pytest
 
+from ..helpers.checks import check_no_token, check_trace
 from ..helpers.server import MockServer
 
 
@@ -18,6 +19,16 @@ def make_issue():
         }
 
     return make
+
+
+@pytest.fixture
+def read_trace(work_dir, api_token):
+    def read(server, start=0):
+        text = (work_dir / "trace.jsonl").read_text(encoding="utf-8")
+        check_no_token(api_token, text)
+        return check_trace(text, server.base_url, server.requests[start:])
+
+    return read
 
 
 @pytest.fixture
